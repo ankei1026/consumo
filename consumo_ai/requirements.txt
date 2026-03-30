@@ -1,0 +1,15 @@
+flask>=2.3.0
+flask-cors>=4.0.0
+python-dotenv>=1.0.0
+google-generativeai>=0.8.0
+pillow>=10.4.0
+
+# winget install Python.Python.3.11
+# py -3.11 -m venv venv
+# venv\Scripts\activate
+# pip install -r requirements.txt
+# python.exe -m pip install --upgrade pip
+
+# or
+# pip install flask flask-cors google-generativeai pillow python-dotenv werkzeug
+# pip uninstall google-generativeai
