@@ -1,7 +1,27 @@
 <svg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="waterGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F5ECD"/>
+      <stop offset="100%" stop-color="#3A8DFF"/>
+    </linearGradient>
+  </defs>
   <g fill="none" fill-rule="evenodd">
-    <g fill="#0284c7" fill-opacity="0.05">
-      <path d="M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z"/>
-    </g>
+    <!-- Water Drop Shape -->
+    <path d="M30 8 C 22 8, 12 20, 12 30 C 12 40, 20 48, 30 52 C 40 48, 48 40, 48 30 C 48 20, 38 8, 30 8Z"
+          fill="url(#waterGradient)"
+          fill-opacity="0.95"/>
+    <!-- Water Ripple Effect -->
+    <path d="M30 12 C 24 12, 16 22, 16 30 C 16 38, 22 44, 30 48 C 38 44, 44 38, 44 30 C 44 22, 36 12, 30 12Z"
+          fill="#FFFFFF"
+          fill-opacity="0.3"/>
+    <!-- Highlight -->
+    <path d="M34 18 Q 36 20, 34 22 L 32 20 Q 33 19, 34 18Z"
+          fill="#FFFFFF"
+          fill-opacity="0.6"/>
+    <!-- Water Droplets -->
+    <circle cx="45" cy="25" r="2" fill="#FFFFFF" fill-opacity="0.4"/>
+    <circle cx="12" cy="28" r="1.5" fill="#FFFFFF" fill-opacity="0.4"/>
+    <circle cx="48" cy="35" r="1.5" fill="#FFFFFF" fill-opacity="0.4"/>
+    <circle cx="9" cy="38" r="1" fill="#FFFFFF" fill-opacity="0.4"/>
   </g>
 </svg>
