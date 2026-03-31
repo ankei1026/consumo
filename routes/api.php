@@ -15,11 +15,13 @@ Route::get('/user', function (Request $request) {
 
 Route::get('/api/search', [SearchController::class, 'search'])->name('api.search');
 
+// Public consumer routes
 Route::prefix('consumer')->group(function () {
     Route::post('/register', [ConsumerAuthController::class, 'register']);
     Route::post('/login', [ConsumerAuthController::class, 'login']);
 });
 
+// Protected consumer routes
 Route::prefix('consumer')->middleware('auth:sanctum')->group(function () {
     // Authentication & Profile
     Route::post('/logout', [ConsumerAuthController::class, 'logout']);
@@ -37,7 +39,7 @@ Route::prefix('consumer')->middleware('auth:sanctum')->group(function () {
     Route::post('/reports', [ConsumerReportController::class, 'storeReport']);
     Route::get('/reports', [ConsumerReportController::class, 'getReports']);
     Route::get('/reports/{id}', [ConsumerReportController::class, 'showReport']);
-    Route::get('/reports/{id}/analysis', [ConsumerReportController::class, 'getReportAnalysis']);
+    Route::get('/reports/{id}/analysis', [ConsumerReportController::class, 'getReportAnalysis']); // NEW ENDPOINT
     Route::put('/reports/{id}', [ConsumerReportController::class, 'updateReport']);
     Route::delete('/reports/{id}', [ConsumerReportController::class, 'deleteReport']);
 
@@ -55,6 +57,7 @@ Route::prefix('consumer')->middleware('auth:sanctum')->group(function () {
     Route::get('/water-consumptions/latest', [ConsumerWaterConsumptionController::class, 'getLatest']);
     Route::get('/water-consumptions/trends', [ConsumerWaterConsumptionController::class, 'getTrends']);
 
+    // Support tickets
     Route::get('/support-tickets', [ConsumerCustomerSupportController::class, 'index']);
     Route::post('/support-tickets', [ConsumerCustomerSupportController::class, 'store']);
     Route::get('/support-tickets/{id}', [ConsumerCustomerSupportController::class, 'show']);

@@ -4,7 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\Report;
 use App\Models\MultimodalAiResponse;
+use App\Models\WaterConsumption;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 
 class ReportController extends Controller
@@ -39,6 +45,7 @@ class ReportController extends Controller
                     'custcode' => $report->custcode,
                     'content' => $report->content,
                     'image' => $report->image ? asset('storage/' . $report->image) : null,
+                    'status' => $report->status,
                     'created_at' => $report->created_at,
                     'updated_at' => $report->updated_at,
                     'consumer' => $report->consumer ? [
@@ -94,6 +101,7 @@ class ReportController extends Controller
             'content' => $report->content,
             'image' => $report->image ? asset('storage/' . $report->image) : null,
             'created_at' => $report->created_at,
+            'status' => $report->status,
             'updated_at' => $report->updated_at,
             'consumer' => $report->consumer ? [
                 'name' => $report->consumer->name,
@@ -226,5 +234,458 @@ class ReportController extends Controller
             'reports' => $reports,
             'filters' => $request->all(),
         ]);
+    }
+
+    /**
+     * Retry AI analysis for a report
+     *
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+
+    /**
+     * Retry AI analysis for a report
+     */
+    public function retryAnalysis($id)
+    {
+        try {
+            Log::info('=== RETRY ANALYSIS STARTED ===');
+            Log::info('Report ID: ' . $id);
+
+            $user = Auth::user();
+
+            if (!$user) {
+                Log::error('No authenticated user');
+                if (request()->wantsJson()) {
+                    return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+                }
+                return redirect()->route('login');
+            }
+
+            // Check if user is admin
+            $isAdmin = $user instanceof \App\Models\User && $user->role === 'admin';
+
+            if (!$isAdmin) {
+                Log::error('User is not admin: ' . $user->email);
+                $message = 'Unauthorized. Admin access required.';
+                if (request()->wantsJson()) {
+                    return response()->json(['success' => false, 'message' => $message], 403);
+                }
+                return redirect()->back()->with('error', $message);
+            }
+
+            $report = Report::find($id);
+
+            if (!$report) {
+                Log::error('Report not found: ' . $id);
+                $message = 'Report not found';
+                if (request()->wantsJson()) {
+                    return response()->json(['success' => false, 'message' => $message], 404);
+                }
+                return redirect()->back()->with('error', $message);
+            }
+
+            Log::info('Report found - ID: ' . $report->id . ', Content: ' . substr($report->content, 0, 50));
+
+            // Check if image exists
+            if (!$report->image) {
+                Log::error('No image path for report: ' . $report->id);
+                $message = 'Report image not found';
+                if (request()->wantsJson()) {
+                    return response()->json(['success' => false, 'message' => $message], 404);
+                }
+                return redirect()->back()->with('error', $message);
+            }
+
+            $fullImagePath = Storage::disk('public')->path($report->image);
+            Log::info('Image path: ' . $fullImagePath);
+
+            if (!file_exists($fullImagePath)) {
+                Log::error('Image file does not exist at: ' . $fullImagePath);
+                $message = 'Report image file not found';
+                if (request()->wantsJson()) {
+                    return response()->json(['success' => false, 'message' => $message], 404);
+                }
+                return redirect()->back()->with('error', $message);
+            }
+
+            Log::info('Image size: ' . filesize($fullImagePath) . ' bytes');
+
+            // Get consumption records
+            $consumptionRecords = $this->getHistoricalConsumptionData($report->custcode, $report->water_consumption_id);
+            Log::info('Consumption records count: ' . count($consumptionRecords));
+
+            // Prepare AI data
+            $aiData = [
+                'report_content' => $report->content,
+                'consumption_records' => $consumptionRecords,
+                'water_consumption_id' => $report->water_consumption_id
+            ];
+
+            // Directly call the AI analysis without checking health first
+            Log::info('Calling AI analysis directly...');
+            $success = $this->analyzeReportWithAI($report, $fullImagePath, $aiData);
+
+            Log::info('AI analysis result: ' . ($success ? 'SUCCESS' : 'FAILED'));
+
+            if ($success) {
+                $message = 'AI analysis retriggered successfully!';
+                if (request()->wantsJson()) {
+                    return response()->json([
+                        'success' => true,
+                        'message' => $message,
+                        'data' => [
+                            'analysis' => $report->fresh()->aiResponse
+                        ]
+                    ]);
+                }
+                return redirect()->back()->with('success', $message);
+            } else {
+                $message = 'AI analysis failed. Please check logs for details.';
+                if (request()->wantsJson()) {
+                    return response()->json(['success' => false, 'message' => $message], 500);
+                }
+                return redirect()->back()->with('error', $message);
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to retry analysis: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
+
+            $message = 'Failed to retry analysis: ' . $e->getMessage();
+            if (request()->wantsJson()) {
+                return response()->json(['success' => false, 'message' => $message], 500);
+            }
+            return redirect()->back()->with('error', $message);
+        }
+    }
+
+    /**
+     * Analyze report with AI service
+     */
+    private function analyzeReportWithAI($report, $imagePath, $aiData)
+    {
+        try {
+            $aiApiUrl = env('PYTHON_AI_API_URL', 'http://127.0.0.1:5001');
+            Log::info('AI API URL: ' . $aiApiUrl);
+
+            // Check if image file exists
+            if (!file_exists($imagePath)) {
+                Log::error('Image file not found: ' . $imagePath);
+                return false;
+            }
+
+            Log::info('Image file size: ' . filesize($imagePath) . ' bytes');
+
+            // Prepare billing data
+            $billingData = [
+                'report_content' => $aiData['report_content'],
+                'consumption_records' => $aiData['consumption_records']
+            ];
+
+            Log::info('Sending POST request to AI service endpoint: /analyze-leak');
+            Log::info('Report content length: ' . strlen($aiData['report_content']));
+            Log::info('Consumption records: ' . json_encode($aiData['consumption_records']));
+
+            // Create multipart form data request
+            $response = Http::timeout(120) // Increased timeout for AI processing
+                ->attach(
+                    'image',
+                    file_get_contents($imagePath),
+                    basename($imagePath)
+                )
+                ->post($aiApiUrl . '/analyze-leak', [
+                    'billing_data' => json_encode($billingData)
+                ]);
+
+            Log::info('AI response status: ' . $response->status());
+            Log::info('AI response body: ' . substr($response->body(), 0, 500));
+
+            if ($response->successful()) {
+                $aiResult = $response->json();
+                Log::info('AI result success flag: ' . ($aiResult['success'] ?? 'not set'));
+
+                if (isset($aiResult['success']) && $aiResult['success'] === true && isset($aiResult['data'])) {
+                    // Store AI analysis result
+                    $this->storeAiResponse($report, $aiResult['data']);
+                    Log::info('AI analysis completed and stored successfully');
+                    return true;
+                } else {
+                    Log::warning('AI result missing expected fields: ' . json_encode($aiResult));
+                    return false;
+                }
+            } else {
+                Log::error('AI service request failed with status: ' . $response->status());
+                Log::error('Response body: ' . $response->body());
+                return false;
+            }
+        } catch (\Exception $e) {
+            Log::error('AI analysis exception: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
+            return false;
+        }
+    }
+
+    /**
+     * Check if AI service is available (optional, for health checks only)
+     */
+    private function checkAIServiceAvailability()
+    {
+        try {
+            $aiApiUrl = env('PYTHON_AI_API_URL', 'http://127.0.0.1:5001');
+
+            $cacheKey = 'ai_service_health';
+            if (Cache::has($cacheKey)) {
+                return Cache::get($cacheKey);
+            }
+
+            $response = Http::timeout(3)->get($aiApiUrl . '/health');
+
+            $isAvailable = $response->successful() &&
+                isset($response->json()['analyzer_ready']) &&
+                $response->json()['analyzer_ready'] === true;
+
+            Cache::put($cacheKey, $isAvailable, 30);
+
+            return $isAvailable;
+        } catch (\Exception $e) {
+            Log::error('AI service health check failed: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get historical consumption data for AI analysis
+     */
+    private function getHistoricalConsumptionData($custcode, $currentConsumptionId)
+    {
+        try {
+            $currentConsumption = WaterConsumption::find($currentConsumptionId);
+
+            if (!$currentConsumption) {
+                return [];
+            }
+
+            $historicalRecords = WaterConsumption::where('custcode', $custcode)
+                ->where('id', '!=', $currentConsumptionId)
+                ->orderBy('start_date', 'desc')
+                ->limit(6)
+                ->get();
+
+            $consumptionRecords = [];
+
+            // Add current consumption record
+            $consumptionRecords[] = [
+                'id' => $currentConsumption->id,
+                'consumption' => (float) $currentConsumption->consumption,
+                'current_reading' => (float) $currentConsumption->current_reading,
+                'previous_reading' => (float) $currentConsumption->previous_reading,
+                'billing_period' => $currentConsumption->start_date ?
+                    $currentConsumption->start_date->format('F Y') : null,
+                'start_date' => $currentConsumption->start_date ? $currentConsumption->start_date->format('Y-m-d') : null,
+                'end_date' => $currentConsumption->end_date ? $currentConsumption->end_date->format('Y-m-d') : null,
+            ];
+
+            // Add historical records
+            foreach ($historicalRecords as $record) {
+                $consumptionRecords[] = [
+                    'id' => $record->id,
+                    'consumption' => (float) $record->consumption,
+                    'current_reading' => (float) $record->current_reading,
+                    'previous_reading' => (float) $record->previous_reading,
+                    'billing_period' => $record->start_date ?
+                        $record->start_date->format('F Y') : null,
+                    'start_date' => $record->start_date ? $record->start_date->format('Y-m-d') : null,
+                    'end_date' => $record->end_date ? $record->end_date->format('Y-m-d') : null,
+                ];
+            }
+
+            return $consumptionRecords;
+        } catch (\Exception $e) {
+            Log::error('Failed to get historical consumption data: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Store AI response in database
+     */
+    private function storeAiResponse($report, $analysisData)
+    {
+        try {
+            MultimodalAiResponse::updateOrCreate(
+                ['report_id' => $report->id],
+                [
+                    'leak_detected' => $analysisData['leak_detected'] ?? false,
+                    'leak_type' => $analysisData['leak_type'] ?? null,
+                    'severity' => $analysisData['severity'] ?? null,
+                    'priority' => $analysisData['priority'] ?? null,
+                    'image_analysis' => $analysisData['image_analysis'] ?? null,
+                    'recommendation' => $analysisData['recommendation'] ?? null,
+                    'summary' => $analysisData['summary'] ?? null,
+                    'text_consistency' => is_array($analysisData['text_consistency'] ?? null) ?
+                        json_encode($analysisData['text_consistency']) : $analysisData['text_consistency'] ?? null,
+                    'consumption_analysis' => is_array($analysisData['consumption_analysis'] ?? null) ?
+                        json_encode($analysisData['consumption_analysis']) : $analysisData['consumption_analysis'] ?? null,
+                    'trend_analysis' => is_array($analysisData['trend_analysis'] ?? null) ?
+                        json_encode($analysisData['trend_analysis']) : $analysisData['trend_analysis'] ?? null,
+                    'raw_response' => json_encode($analysisData),
+                    'analyzed_at' => now(),
+                    'is_cached' => $analysisData['is_fallback'] ?? false,
+                    'is_fallback' => $analysisData['is_fallback'] ?? false
+                ]
+            );
+
+            Log::info('AI response stored for report: ' . $report->id);
+        } catch (\Exception $e) {
+            Log::error('Failed to store AI response: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Update report status
+     */
+    public function updateStatus(Request $request, $id)
+    {
+        try {
+            Log::info('updateStatus called', [
+                'id' => $id,
+                'status' => $request->status,
+                'user_id' => auth()->id()
+            ]);
+
+            $user = Auth::user();
+
+            if (!$user) {
+                if ($request->wantsJson()) {
+                    return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+                }
+                return redirect()->route('login');
+            }
+
+            // Check if user is admin
+            $isAdmin = $user instanceof \App\Models\User && $user->role === 'admin';
+
+            if (!$isAdmin) {
+                $message = 'Unauthorized. Admin access required.';
+                if ($request->wantsJson()) {
+                    return response()->json(['success' => false, 'message' => $message], 403);
+                }
+                return redirect()->back()->with('error', $message);
+            }
+
+            $validated = $request->validate([
+                'status' => 'required|in:pending,ongoing,resolved,closed,rejected',
+                'resolution_notes' => 'nullable|string|max:1000',
+            ]);
+
+            $report = Report::findOrFail($id);
+
+            Log::info('Before update - Current status: ' . $report->status);
+
+            $updateData = [
+                'status' => $validated['status'],
+            ];
+
+            // If status is resolved, set resolved_at
+            if ($validated['status'] === 'resolved') {
+                $updateData['resolved_at'] = now();
+                $updateData['resolved_by'] = $user->id;
+                $updateData['resolution_notes'] = $validated['resolution_notes'] ?? null;
+            }
+            // If status is closed or rejected, also set resolved_at if not already set
+            elseif (in_array($validated['status'], ['closed', 'rejected']) && !$report->resolved_at) {
+                $updateData['resolved_at'] = now();
+                $updateData['resolved_by'] = $user->id;
+                if ($validated['resolution_notes']) {
+                    $updateData['resolution_notes'] = $validated['resolution_notes'];
+                }
+            }
+            // If status is changed to pending or ongoing, clear resolved fields
+            elseif (in_array($validated['status'], ['pending', 'ongoing'])) {
+                $updateData['resolved_at'] = null;
+                $updateData['resolved_by'] = null;
+                $updateData['resolution_notes'] = null;
+            }
+
+            $report->update($updateData);
+
+            // Refresh the report to get updated data
+            $report->refresh();
+
+            Log::info('After update - New status: ' . $report->status);
+            Log::info('After update - resolved_at: ' . $report->resolved_at);
+            Log::info('After update - resolution_notes: ' . $report->resolution_notes);
+
+            $message = 'Report status updated successfully';
+
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => $message,
+                    'data' => [
+                        'id' => $report->id,
+                        'status' => $report->status,
+                        'status_label' => $report->status_label,
+                        'status_color' => $report->status_color,
+                        'resolved_at' => $report->resolved_at,
+                        'resolution_notes' => $report->resolution_notes,
+                    ]
+                ]);
+            }
+
+            // For Inertia requests, redirect back with success message and updated data
+            return redirect()->back()->with([
+                'success' => $message,
+                'updated_status' => $validated['status']
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to update report status: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
+
+            $message = 'Failed to update report status: ' . $e->getMessage();
+
+            if ($request->wantsJson()) {
+                return response()->json(['success' => false, 'message' => $message], 500);
+            }
+
+            return redirect()->back()->with('error', $message);
+        }
+    }
+
+    /**
+     * Get status history for a report
+     */
+    public function getStatusHistory($id)
+    {
+        try {
+            $report = Report::with(['resolver'])->findOrFail($id);
+
+            $history = [
+                'current_status' => [
+                    'status' => $report->status,
+                    'label' => $report->status_label,
+                    'color' => $report->status_color,
+                    'updated_at' => $report->updated_at,
+                ],
+                'resolved_at' => $report->resolved_at,
+                'resolution_notes' => $report->resolution_notes,
+                'resolved_by' => $report->resolver ? [
+                    'id' => $report->resolver->id,
+                    'name' => $report->resolver->name,
+                    'email' => $report->resolver->email,
+                ] : null,
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $history
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to get status history: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get status history'
+            ], 500);
+        }
     }
 }

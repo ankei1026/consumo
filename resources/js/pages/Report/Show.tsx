@@ -1,8 +1,7 @@
 // resources/js/Pages/Report/Show.tsx
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Link } from '@inertiajs/react';
+import { Link, router } from '@inertiajs/react';
 import {
     ArrowLeft,
     Droplet,
@@ -23,8 +22,14 @@ import {
     Clock,
     Zap,
     FileText,
+    RefreshCw,
+    XCircle,
+    CheckCircle,
+    Edit2,
+    Save,
 } from 'lucide-react';
 import DashboardLayout from '@/pages/Layouts/DashboardLayout';
+import toast from 'react-hot-toast';
 
 interface ReportShowProps {
     report: {
@@ -32,6 +37,12 @@ interface ReportShowProps {
         content: string;
         image: string | null;
         created_at: string;
+        updated_at: string;
+        status?: string;
+        status_label?: string;
+        status_color?: string;
+        resolved_at?: string | null;
+        resolution_notes?: string | null;
         consumer: {
             name: string;
             account_number: string;
@@ -110,6 +121,36 @@ const getPriorityConfig = (priority: string) => {
     return configs[priority as keyof typeof configs] || configs.monitor;
 };
 
+const statusConfig: Record<
+    string,
+    { label: string; icon: React.ElementType; color: string; bgColor: string }
+> = {
+    pending: {
+        label: 'Pending',
+        icon: Clock,
+        color: 'text-yellow-700',
+        bgColor: 'bg-yellow-50 border-yellow-200',
+    },
+    ongoing: {
+        label: 'In Progress',
+        icon: RefreshCw,
+        color: 'text-blue-700',
+        bgColor: 'bg-blue-50 border-blue-200',
+    },
+    resolved: {
+        label: 'Resolved',
+        icon: CheckCircle,
+        color: 'text-green-700',
+        bgColor: 'bg-green-50 border-green-200',
+    },
+    rejected: {
+        label: 'Rejected',
+        icon: XCircle,
+        color: 'text-red-700',
+        bgColor: 'bg-red-50 border-red-200',
+    },
+};
+
 const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
@@ -135,6 +176,23 @@ const itemVariants = {
 
 export default function ReportShow({ report }: ReportShowProps) {
     const [modalImage, setModalImage] = useState<string | null>(null);
+    const [selectedStatus, setSelectedStatus] = useState(
+        report.status || 'pending',
+    );
+    const [resolutionNotes, setResolutionNotes] = useState(
+        report.resolution_notes || '',
+    );
+    const [isUpdating, setIsUpdating] = useState(false);
+    const [currentStatus, setCurrentStatus] = useState(
+        report.status || 'pending',
+    );
+
+    // Sync with props when report changes
+    useEffect(() => {
+        setCurrentStatus(report.status || 'pending');
+        setSelectedStatus(report.status || 'pending');
+        setResolutionNotes(report.resolution_notes || '');
+    }, [report]);
 
     const formatDate = (date: string) => {
         if (!date) return 'N/A';
@@ -161,10 +219,10 @@ export default function ReportShow({ report }: ReportShowProps) {
         navigator.clipboard
             .writeText(summary)
             .then(() => {
-                alert('Summary copied to clipboard!');
+                toast.success('Summary copied to clipboard!');
             })
-            .catch((err) => {
-                console.error('Failed to copy: ', err);
+            .catch(() => {
+                toast.error('Failed to copy summary');
             });
     };
 
@@ -176,6 +234,38 @@ export default function ReportShow({ report }: ReportShowProps) {
         setModalImage(null);
     };
 
+    const handleUpdateStatus = () => {
+        if (selectedStatus === currentStatus && !resolutionNotes) {
+            toast.info('No changes to update');
+            return;
+        }
+
+        setIsUpdating(true);
+
+        router.put(
+            `/reports/${report.id}/status`,
+            {
+                status: selectedStatus,
+                resolution_notes: resolutionNotes,
+            },
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    toast.success('Report status updated successfully');
+                    // Force reload to get fresh data from server
+                    router.reload({ preserveScroll: true });
+                },
+                onError: (errors) => {
+                    console.error('Update error:', errors);
+                    toast.error('Failed to update report status');
+                },
+                onFinish: () => {
+                    setIsUpdating(false);
+                },
+            },
+        );
+    };
+
     const severityConfig = report.ai_response
         ? getSeverityConfig(report.ai_response.severity)
         : null;
@@ -183,6 +273,7 @@ export default function ReportShow({ report }: ReportShowProps) {
         ? getPriorityConfig(report.ai_response.priority)
         : null;
     const SeverityIcon = severityConfig?.icon || AlertCircle;
+    const StatusIcon = statusConfig[currentStatus]?.icon || Clock;
 
     return (
         <DashboardLayout>
@@ -237,38 +328,50 @@ export default function ReportShow({ report }: ReportShowProps) {
                                 </div>
                             </div>
 
-                            {report.ai_response && (
-                                <div className="flex flex-wrap gap-2">
-                                    <span
-                                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${severityConfig?.bg} ${severityConfig?.text}`}
-                                    >
-                                        <SeverityIcon className="h-3 w-3" />
-                                        {report.ai_response.severity?.toUpperCase()}
-                                    </span>
-                                    <span
-                                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${priorityConfig?.bg} ${priorityConfig?.text}`}
-                                    >
-                                        <Clock className="h-3 w-3" />
-                                        {report.ai_response.priority?.toUpperCase()}
-                                    </span>
-                                    <span
-                                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${
-                                            report.ai_response.leak_detected
-                                                ? 'bg-red-100 text-red-800'
-                                                : 'bg-green-100 text-green-800'
-                                        }`}
-                                    >
-                                        {report.ai_response.leak_detected ? (
-                                            <Droplet className="h-3 w-3" />
-                                        ) : (
-                                            <CheckCircle2 className="h-3 w-3" />
-                                        )}
-                                        {report.ai_response.leak_detected
-                                            ? 'Leak Detected'
-                                            : 'No Leak'}
-                                    </span>
-                                </div>
-                            )}
+                            <div className="flex flex-wrap gap-2">
+                                {/* Status Badge */}
+                                <span
+                                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${statusConfig[currentStatus]?.bgColor} ${statusConfig[currentStatus]?.color}`}
+                                >
+                                    <StatusIcon className="h-3 w-3" />
+                                    {statusConfig[currentStatus]?.label ||
+                                        currentStatus}
+                                </span>
+
+                                {report.ai_response && (
+                                    <>
+                                        <span
+                                            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${severityConfig?.bg} ${severityConfig?.text}`}
+                                        >
+                                            <SeverityIcon className="h-3 w-3" />
+                                            {report.ai_response.severity?.toUpperCase()}
+                                        </span>
+                                        <span
+                                            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${priorityConfig?.bg} ${priorityConfig?.text}`}
+                                        >
+                                            <Clock className="h-3 w-3" />
+                                            {report.ai_response.priority?.toUpperCase()}
+                                        </span>
+                                        <span
+                                            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${
+                                                report.ai_response.leak_detected
+                                                    ? 'bg-red-100 text-red-800'
+                                                    : 'bg-green-100 text-green-800'
+                                            }`}
+                                        >
+                                            {report.ai_response
+                                                .leak_detected ? (
+                                                <Droplet className="h-3 w-3" />
+                                            ) : (
+                                                <CheckCircle2 className="h-3 w-3" />
+                                            )}
+                                            {report.ai_response.leak_detected
+                                                ? 'Leak Detected'
+                                                : 'No Leak'}
+                                        </span>
+                                    </>
+                                )}
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
@@ -415,34 +518,102 @@ export default function ReportShow({ report }: ReportShowProps) {
                                                     </div>
                                                 )}
                                             </div>
+                                        </div>
+                                    </div>
+                                )}
 
-                                            {report.image && (
-                                                <div>
-                                                    <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
-                                                        <Eye className="h-5 w-5 text-blue-500" />
-                                                        Attached Image
-                                                    </h2>
-                                                    <div className="overflow-hidden rounded-lg border bg-gray-50">
-                                                        <img
-                                                            src={report.image}
-                                                            alt="Report"
-                                                            className="max-h-96 w-full cursor-pointer object-contain transition hover:opacity-90"
-                                                            onClick={() =>
-                                                                openModal(
-                                                                    report.image!,
-                                                                )
-                                                            }
-                                                        />
-                                                    </div>
-                                                </div>
-                                            )}
+                                {report.image && (
+                                    <div>
+                                        <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                                            <Eye className="h-5 w-5 text-blue-500" />
+                                            Attached Image
+                                        </h2>
+                                        <div className="overflow-hidden rounded-lg border bg-gray-50">
+                                            <img
+                                                src={report.image}
+                                                alt="Report"
+                                                className="max-h-96 w-full cursor-pointer object-contain transition hover:opacity-90"
+                                                onClick={() =>
+                                                    openModal(report.image!)
+                                                }
+                                            />
                                         </div>
                                     </div>
                                 )}
                             </div>
 
-                            {/* Right Column - AI Analysis */}
-                            <div>
+                            {/* Right Column - AI Analysis & Status */}
+                            <div className="space-y-6">
+                                {/* Status Update Section */}
+                                <div>
+                                    <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                                        <RefreshCw className="h-5 w-5 text-blue-500" />
+                                        Update Status
+                                    </h2>
+                                    <div className="rounded-xl border border-gray-100 bg-white p-4">
+                                        <p className="mb-3 text-sm font-medium text-gray-500">
+                                            Select a status
+                                        </p>
+
+                                        <div className="flex flex-wrap gap-3">
+                                            {(
+                                                [
+                                                    'pending',
+                                                    'ongoing',
+                                                    'resolved',
+                                                    'rejected',
+                                                ] as const
+                                            ).map((s) => {
+                                                const cfg = statusConfig[s];
+                                                const isActive =
+                                                    selectedStatus === s;
+                                                return (
+                                                    <button
+                                                        key={s}
+                                                        onClick={() =>
+                                                            setSelectedStatus(s)
+                                                        }
+                                                        disabled={isUpdating}
+                                                        className={`flex items-center gap-2 rounded-xl border-[1.5px] px-4 py-2.5 text-sm font-medium transition-all ${
+                                                            isActive
+                                                                ? `${cfg.bgColor} ${cfg.color} border-current`
+                                                                : 'border-transparent bg-gray-50 text-gray-500 hover:border-gray-200'
+                                                        }`}
+                                                    >
+                                                        <cfg.icon className="h-4 w-4" />
+                                                        {cfg.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="mt-4 flex items-center gap-3">
+                                            <button
+                                                onClick={handleUpdateStatus}
+                                                disabled={
+                                                    isUpdating ||
+                                                    (selectedStatus ===
+                                                        currentStatus &&
+                                                        !resolutionNotes)
+                                                }
+                                                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                                            >
+                                                {isUpdating
+                                                    ? 'Updating...'
+                                                    : 'Update status'}
+                                            </button>
+                                        </div>
+
+                                        {report.resolved_at && (
+                                            <p className="mt-3 text-xs text-green-600">
+                                                Resolved on:{' '}
+                                                {formatDate(report.resolved_at)}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* AI Analysis Section */}
                                 {report.ai_response ? (
                                     <div className="rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
                                         <div className="mb-4 flex items-center gap-2">
@@ -637,6 +808,17 @@ export default function ReportShow({ report }: ReportShowProps) {
                                         <p className="mt-1 text-xs text-gray-400">
                                             This may take a few moments
                                         </p>
+                                        <button
+                                            onClick={() =>
+                                                router.post(
+                                                    `/reports/${report.id}/retry-analysis`,
+                                                )
+                                            }
+                                            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                                        >
+                                            <RefreshCw className="h-4 w-4" />
+                                            Retry Analysis
+                                        </button>
                                     </div>
                                 )}
                             </div>

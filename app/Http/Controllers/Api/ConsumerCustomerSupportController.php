@@ -95,7 +95,6 @@ class ConsumerCustomerSupportController extends Controller
                     'ticket' => $this->formatTicket($ticket)
                 ]
             ], 201);
-
         } catch (\Exception $e) {
             Log::error('Error creating support ticket: ' . $e->getMessage());
             return response()->json([
@@ -130,7 +129,6 @@ class ConsumerCustomerSupportController extends Controller
                     'ticket' => $this->formatTicket($ticket)
                 ]
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -151,8 +149,10 @@ class ConsumerCustomerSupportController extends Controller
             'formatted_subject' => $ticket->formatted_subject,
             'message' => $ticket->message,
             'image' => $ticket->image ? asset('storage/' . $ticket->image) : null,
+            'status' => $ticket->status ?? 'pending',
             'created_at' => $ticket->created_at->toISOString(),
             'updated_at' => $ticket->updated_at->toISOString(),
+            'resolved_at' => $ticket->resolved_at ? $ticket->resolved_at->toISOString() : null,
         ];
     }
 }

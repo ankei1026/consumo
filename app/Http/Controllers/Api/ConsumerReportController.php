@@ -782,6 +782,7 @@ class ConsumerReportController extends Controller
             'content' => $report->content,
             'created_at' => $report->created_at->toISOString(),
             'updated_at' => $report->updated_at->toISOString(),
+            'status' => $report->status,
             'has_ai_analysis' => $report->aiResponse ? true : false,
             'ai_analysis_status' => $report->aiResponse ? 'completed' : 'pending',
             'water_consumption' => $report->waterConsumption ? $this->formatWaterConsumption($report->waterConsumption) : null,

@@ -86,12 +86,12 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::delete('/customer-support/{id}', [CustomerSupportController::class, 'destroy'])
         ->name('customer-support.destroy');
 
-
     Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');
     Route::get('/reports/{id}', [ReportController::class, 'show'])->name('reports.show');
     Route::get('/reports/{id}/analysis', [ReportController::class, 'getAnalysis'])->name('reports.analysis');
     Route::post('/reports/filter', [ReportController::class, 'filterByAnalysis'])->name('reports.filter');
-
+    Route::post('/reports/{id}/retry-analysis', [ReportController::class, 'retryAnalysis']);
+    Route::put('/reports/{id}/status', [ReportController::class, 'updateStatus'])->name('reports.update-status');
 
     Route::get('/profile', [ProfileController::class, 'index'])->name('profile.index');
     Route::put('/profile', [ProfileController::class, 'update'])->name('profile.update');

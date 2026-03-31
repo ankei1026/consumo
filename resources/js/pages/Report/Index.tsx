@@ -29,6 +29,7 @@ import {
     Home,
     Building2,
     Landmark,
+    XCircle,
 } from 'lucide-react';
 import DashboardLayout from '@/pages/Layouts/DashboardLayout';
 
@@ -39,6 +40,11 @@ interface Report {
     image: string | null;
     created_at: string;
     updated_at: string;
+    has_ai_analysis?: boolean;
+    is_fallback_analysis?: boolean;
+    status?: string;
+    status_label?: string;
+    resolved_at?: string | null;
     consumer: {
         name: string;
         account_number: string;
@@ -74,6 +80,7 @@ interface Report {
         };
         trend_analysis: any;
         analyzed_at: string;
+        is_fallback?: boolean;
     } | null;
 }
 
@@ -92,6 +99,7 @@ interface ReportIndexProps {
     filters: {
         leak_detected: string;
         severity: string;
+        status: string;
     };
 }
 
@@ -135,6 +143,33 @@ const getPriorityConfig = (priority: string) => {
     return configs[priority as keyof typeof configs] || configs.monitor;
 };
 
+const statusConfig: Record<string, { label: string; icon: React.ElementType; color: string; bgColor: string }> = {
+    pending: {
+        label: 'Pending',
+        icon: Clock,
+        color: 'text-yellow-700',
+        bgColor: 'bg-yellow-50 border-yellow-200',
+    },
+    ongoing: {
+        label: 'In Progress',
+        icon: RefreshCw,
+        color: 'text-blue-700',
+        bgColor: 'bg-blue-50 border-blue-200',
+    },
+    resolved: {
+        label: 'Resolved',
+        icon: CheckCircle2,
+        color: 'text-green-700',
+        bgColor: 'bg-green-50 border-green-200',
+    },
+    rejected: {
+        label: 'Rejected',
+        icon: XCircle,
+        color: 'text-red-700',
+        bgColor: 'bg-red-50 border-red-200',
+    },
+};
+
 const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
@@ -166,7 +201,15 @@ export default function ReportIndex({
     const [filters, setFilters] = useState({
         leak_detected: initialFilters?.leak_detected || '',
         severity: initialFilters?.severity || '',
+        status: initialFilters?.status || '',
     });
+    const [retryingReports, setRetryingReports] = useState<Set<number>>(
+        new Set(),
+    );
+    const [toast, setToast] = useState<{
+        message: string;
+        type: 'success' | 'error';
+    } | null>(null);
 
     // Real-time filter effect - applies filters automatically when they change
     useEffect(() => {
@@ -176,10 +219,18 @@ export default function ReportIndex({
                 replace: true,
                 preserveScroll: true,
             });
-        }, 300); // 300ms debounce to avoid too many requests
+        }, 300);
 
         return () => clearTimeout(timeoutId);
-    }, [filters.leak_detected, filters.severity]);
+    }, [filters.leak_detected, filters.severity, filters.status]);
+
+    // Auto-hide toast after 5 seconds
+    useEffect(() => {
+        if (toast) {
+            const timer = setTimeout(() => setToast(null), 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [toast]);
 
     const formatDate = (date: string) => {
         if (!date) return 'N/A';
@@ -210,6 +261,7 @@ export default function ReportIndex({
         setFilters({
             leak_detected: '',
             severity: '',
+            status: '',
         });
     };
 
@@ -218,11 +270,61 @@ export default function ReportIndex({
         navigator.clipboard
             .writeText(summary)
             .then(() => {
-                alert('Summary copied to clipboard!');
+                showToast('Summary copied to clipboard!', 'success');
             })
             .catch((err) => {
                 console.error('Failed to copy: ', err);
+                showToast('Failed to copy summary', 'error');
             });
+    };
+
+    const retryAnalysis = async (reportId: number) => {
+        if (retryingReports.has(reportId)) return;
+
+        setRetryingReports((prev) => new Set(prev).add(reportId));
+
+        router.post(
+            `/reports/${reportId}/retry-analysis`,
+            {},
+            {
+                preserveState: true,
+                preserveScroll: true,
+                onSuccess: (page) => {
+                    if (page.props?.flash?.success) {
+                        showToast(page.props.flash.success, 'success');
+                    } else if (page.props?.flash?.error) {
+                        showToast(page.props.flash.error, 'error');
+                    } else {
+                        showToast(
+                            'AI analysis retriggered successfully!',
+                            'success',
+                        );
+                    }
+
+                    setTimeout(() => {
+                        router.reload({ preserveScroll: true });
+                    }, 1500);
+                },
+                onError: (errors) => {
+                    console.error('Error retrying analysis:', errors);
+                    const errorMessage =
+                        errors.message || 'Failed to retry analysis';
+                    showToast(errorMessage, 'error');
+                },
+                onFinish: () => {
+                    setRetryingReports((prev) => {
+                        const newSet = new Set(prev);
+                        newSet.delete(reportId);
+                        return newSet;
+                    });
+                },
+            },
+        );
+    };
+
+    const showToast = (message: string, type: 'success' | 'error') => {
+        setToast({ message, type });
+        setTimeout(() => setToast(null), 5000);
     };
 
     const openModal = (imageSrc: string) => {
@@ -235,7 +337,7 @@ export default function ReportIndex({
 
     // Check if any filters are active
     const hasActiveFilters =
-        filters.leak_detected !== '' || filters.severity !== '';
+        filters.leak_detected !== '' || filters.severity !== '' || filters.status !== '';
 
     const stats = [
         {
@@ -252,14 +354,16 @@ export default function ReportIndex({
                 .length.toString(),
             icon: Droplet,
             change: 'Critical issues',
-            color: 'red',
+            color: 'blue',
         },
         {
             name: 'Failed Analysis',
-            value: reports.data.filter((r) => !r.ai_response).length.toString(),
+            value: reports.data
+                .filter((r) => !r.ai_response || r.ai_response?.is_fallback)
+                .length.toString(),
             icon: Bot,
-            change: 'Unable to analyze',
-            color: 'red',
+            change: 'Needs retry',
+            color: 'blue',
         },
         {
             name: 'Resolved Issues',
@@ -272,12 +376,31 @@ export default function ReportIndex({
                 .length.toString(),
             icon: CheckCircle2,
             change: 'Completed',
-            color: 'green',
+            color: 'blue',
         },
     ];
 
     return (
         <DashboardLayout>
+            {/* Toast Notification */}
+            {toast && (
+                <motion.div
+                    initial={{ opacity: 0, y: -50 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -50 }}
+                    className={`fixed top-4 right-4 z-50 flex items-center gap-3 rounded-lg px-4 py-3 shadow-lg ${
+                        toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'
+                    } text-white`}
+                >
+                    {toast.type === 'success' ? (
+                        <CheckCircle2 className="h-5 w-5" />
+                    ) : (
+                        <AlertCircle className="h-5 w-5" />
+                    )}
+                    <span>{toast.message}</span>
+                </motion.div>
+            )}
+
             <motion.div
                 variants={containerVariants}
                 initial="hidden"
@@ -311,10 +434,10 @@ export default function ReportIndex({
                         >
                             <div className="relative z-10">
                                 <div
-                                    className={`mb-4 max-w-fit rounded-lg bg-blue-100 p-3`}
+                                    className={`mb-4 max-w-fit rounded-lg bg-${stat.color}-100 p-3`}
                                 >
                                     <stat.icon
-                                        className={`h-6 w-6 text-blue-600`}
+                                        className={`h-6 w-6 text-${stat.color}-600`}
                                     />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">
@@ -331,8 +454,7 @@ export default function ReportIndex({
                     ))}
                 </motion.div>
 
-                {/* Filters - Real-time with Clear Filter */}
-                {/* Filters - Real-time with Clear Filter */}
+                {/* Filters */}
                 <motion.div
                     variants={itemVariants}
                     className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm"
@@ -383,6 +505,7 @@ export default function ReportIndex({
                                 <option value="low">Low</option>
                             </select>
                         </div>
+
                         <div>
                             <label className="mb-1 block text-sm font-medium text-gray-700">
                                 Actions
@@ -413,6 +536,12 @@ export default function ReportIndex({
                             : null;
                         const SeverityIcon =
                             severityConfig?.icon || AlertCircle;
+                        const isFallback =
+                            report.ai_response?.is_fallback || false;
+                        const hasFailedAnalysis =
+                            !report.ai_response || isFallback;
+                        const reportStatus = report.status || 'pending';
+                        const StatusIcon = statusConfig[reportStatus]?.icon || Clock;
 
                         return (
                             <motion.div
@@ -438,6 +567,12 @@ export default function ReportIndex({
                                                         Leak
                                                     </span>
                                                 )}
+                                                {isFallback && (
+                                                    <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">
+                                                        <Bot className="h-3 w-3" />
+                                                        Fallback Analysis
+                                                    </span>
+                                                )}
                                             </div>
                                             <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-gray-500">
                                                 <span className="inline-flex items-center gap-1">
@@ -454,48 +589,60 @@ export default function ReportIndex({
                                             </div>
                                         </div>
 
-                                        {report.ai_response ? (
-                                            <div className="flex flex-wrap gap-2">
-                                                <span
-                                                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${severityConfig?.bg} ${severityConfig?.text}`}
-                                                >
-                                                    <SeverityIcon className="h-3 w-3" />
-                                                    {report.ai_response.severity?.toUpperCase()}
-                                                </span>
-                                                <span
-                                                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${priorityConfig?.bg} ${priorityConfig?.text}`}
-                                                >
-                                                    <Clock className="h-3 w-3" />
-                                                    {report.ai_response.priority?.toUpperCase()}
-                                                </span>
-                                                <span
-                                                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${
-                                                        report.ai_response
-                                                            .leak_detected
-                                                            ? 'bg-red-100 text-red-800'
-                                                            : 'bg-green-100 text-green-800'
-                                                    }`}
-                                                >
-                                                    {report.ai_response
-                                                        .leak_detected ? (
-                                                        <Droplet className="h-3 w-3" />
-                                                    ) : (
-                                                        <CheckCircle2 className="h-3 w-3" />
-                                                    )}
-                                                    {report.ai_response
-                                                        .leak_detected
-                                                        ? 'Leak Detected'
-                                                        : 'No Leak'}
-                                                </span>
-                                            </div>
-                                        ) : (
-                                            <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
-                                                <AlertCircle className="h-3 w-3" />
-                                                Analysis Failed
+                                        <div className="flex flex-wrap gap-2">
+                                            {/* Status Badge */}
+                                            <span
+                                                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${statusConfig[reportStatus]?.bgColor} ${statusConfig[reportStatus]?.color}`}
+                                            >
+                                                <StatusIcon className="h-3 w-3" />
+                                                {statusConfig[reportStatus]?.label || reportStatus}
                                             </span>
-                                        )}
+
+                                            {report.ai_response && !isFallback && (
+                                                <>
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${severityConfig?.bg} ${severityConfig?.text}`}
+                                                    >
+                                                        <SeverityIcon className="h-3 w-3" />
+                                                        {report.ai_response.severity?.toUpperCase()}
+                                                    </span>
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${priorityConfig?.bg} ${priorityConfig?.text}`}
+                                                    >
+                                                        <Clock className="h-3 w-3" />
+                                                        {report.ai_response.priority?.toUpperCase()}
+                                                    </span>
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${
+                                                            report.ai_response
+                                                                .leak_detected
+                                                                ? 'bg-red-100 text-red-800'
+                                                                : 'bg-green-100 text-green-800'
+                                                        }`}
+                                                    >
+                                                        {report.ai_response
+                                                            .leak_detected ? (
+                                                            <Droplet className="h-3 w-3" />
+                                                        ) : (
+                                                            <CheckCircle2 className="h-3 w-3" />
+                                                        )}
+                                                        {report.ai_response
+                                                            .leak_detected
+                                                            ? 'Leak Detected'
+                                                            : 'No Leak'}
+                                                    </span>
+                                                </>
+                                            )}
+                                            {!report.ai_response && (
+                                                <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-3 py-1 text-xs font-medium text-orange-700">
+                                                    <AlertCircle className="h-3 w-3" />
+                                                    Analysis Failed
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
 
+                                    {/* Rest of the component remains the same */}
                                     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                                         {/* Left Column - Report Details */}
                                         <div className="space-y-4">
@@ -568,11 +715,45 @@ export default function ReportIndex({
                                         {/* Right Column - AI Analysis */}
                                         {report.ai_response ? (
                                             <div className="space-y-4 rounded-lg bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
-                                                <div className="flex items-center gap-2">
-                                                    <Bot className="h-5 w-5 text-blue-600" />
-                                                    <h4 className="font-semibold text-gray-900">
-                                                        AI Analysis
-                                                    </h4>
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <Bot className="h-5 w-5 text-blue-600" />
+                                                        <h4 className="font-semibold text-gray-900">
+                                                            AI Analysis
+                                                        </h4>
+                                                        {isFallback && (
+                                                            <span className="text-xs text-orange-600">
+                                                                (Fallback Mode)
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {hasFailedAnalysis &&
+                                                        !retryingReports.has(
+                                                            report.id,
+                                                        ) && (
+                                                            <button
+                                                                onClick={() =>
+                                                                    retryAnalysis(
+                                                                        report.id,
+                                                                    )
+                                                                }
+                                                                className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:outline-none"
+                                                            >
+                                                                <RefreshCw className="h-3 w-3" />
+                                                                Retry Analysis
+                                                            </button>
+                                                        )}
+                                                    {retryingReports.has(
+                                                        report.id,
+                                                    ) && (
+                                                        <button
+                                                            disabled
+                                                            className="inline-flex cursor-not-allowed items-center gap-1 rounded-lg bg-gray-400 px-3 py-1.5 text-xs font-medium text-white"
+                                                        >
+                                                            <RefreshCw className="h-3 w-3 animate-spin" />
+                                                            Retrying...
+                                                        </button>
+                                                    )}
                                                 </div>
 
                                                 <div className="rounded-lg bg-white p-3">
@@ -601,11 +782,29 @@ export default function ReportIndex({
 
                                                 {report.ai_response
                                                     .recommendation && (
-                                                    <div className="rounded-lg bg-blue-100 p-3">
-                                                        <span className="text-xs font-semibold tracking-wider text-blue-700 uppercase">
+                                                    <div
+                                                        className={`rounded-lg p-3 ${
+                                                            isFallback
+                                                                ? 'bg-orange-100'
+                                                                : 'bg-blue-100'
+                                                        }`}
+                                                    >
+                                                        <span
+                                                            className={`text-xs font-semibold tracking-wider uppercase ${
+                                                                isFallback
+                                                                    ? 'text-orange-700'
+                                                                    : 'text-blue-700'
+                                                            }`}
+                                                        >
                                                             Recommendation
                                                         </span>
-                                                        <p className="mt-1 text-sm text-blue-800">
+                                                        <p
+                                                            className={`mt-1 text-sm ${
+                                                                isFallback
+                                                                    ? 'text-orange-800'
+                                                                    : 'text-blue-800'
+                                                            }`}
+                                                        >
                                                             {
                                                                 report
                                                                     .ai_response
@@ -636,6 +835,11 @@ export default function ReportIndex({
                                                         report.ai_response
                                                             .analyzed_at,
                                                     )}
+                                                    {isFallback && (
+                                                        <span className="ml-2 text-orange-500">
+                                                            (Fallback Analysis)
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         ) : (
@@ -647,9 +851,26 @@ export default function ReportIndex({
                                                 <p className="mt-1 text-xs text-red-600">
                                                     The AI analysis service was
                                                     unable to process this
-                                                    report. Please try again
-                                                    later or contact support.
+                                                    report.
                                                 </p>
+                                                <button
+                                                    onClick={() =>
+                                                        retryAnalysis(report.id)
+                                                    }
+                                                    disabled={retryingReports.has(
+                                                        report.id,
+                                                    )}
+                                                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                                                >
+                                                    <RefreshCw
+                                                        className={`h-4 w-4 ${retryingReports.has(report.id) ? 'animate-spin' : ''}`}
+                                                    />
+                                                    {retryingReports.has(
+                                                        report.id,
+                                                    )
+                                                        ? 'Retrying...'
+                                                        : 'Retry Analysis'}
+                                                </button>
                                             </div>
                                         )}
                                     </div>
@@ -663,6 +884,18 @@ export default function ReportIndex({
                                             <Eye className="h-4 w-4" />
                                             View Details
                                         </Link>
+                                        {hasFailedAnalysis &&
+                                            !retryingReports.has(report.id) && (
+                                                <button
+                                                    onClick={() =>
+                                                        retryAnalysis(report.id)
+                                                    }
+                                                    className="inline-flex items-center gap-1 text-sm font-medium text-orange-600 transition hover:text-orange-800"
+                                                >
+                                                    <RefreshCw className="h-4 w-4" />
+                                                    Retry Analysis
+                                                </button>
+                                            )}
                                     </div>
                                 </div>
                             </motion.div>

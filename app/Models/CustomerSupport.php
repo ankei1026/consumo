@@ -13,11 +13,16 @@ class CustomerSupport extends Model
         'subject',
         'message',
         'image',
+        'status',
+        'admin_response',
+        'resolved_at',
+        'responded_by'
     ];
 
     protected $casts = [
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
+        'resolved_at' => 'datetime',
     ];
 
     // Subject options constant
@@ -27,6 +32,22 @@ class CustomerSupport extends Model
         'suggestion' => 'Suggestion',
         'inquiry' => 'Inquiry',
         'other' => 'Other'
+    ];
+
+    // Status options constant
+    const STATUSES = [
+        'pending' => 'Pending',
+        'in_progress' => 'In Progress',
+        'resolved' => 'Resolved',
+        'closed' => 'Closed'
+    ];
+
+    // Status colors for UI
+    const STATUS_COLORS = [
+        'pending' => 'warning',
+        'in_progress' => 'info',
+        'resolved' => 'success',
+        'closed' => 'secondary'
     ];
 
     /**
@@ -43,6 +64,22 @@ class CustomerSupport extends Model
     public function getFormattedSubjectAttribute(): string
     {
         return self::SUBJECTS[$this->subject] ?? ucfirst($this->subject);
+    }
+
+    /**
+     * Get formatted status
+     */
+    public function getFormattedStatusAttribute(): string
+    {
+        return self::STATUSES[$this->status] ?? ucfirst($this->status);
+    }
+
+    /**
+     * Get status color
+     */
+    public function getStatusColorAttribute(): string
+    {
+        return self::STATUS_COLORS[$this->status] ?? 'secondary';
     }
 
     /**

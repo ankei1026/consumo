@@ -1,5 +1,4 @@
 // resources/js/Pages/CustomerSupport/Show.tsx
-
 import React, { useState } from 'react';
 import { Link, router } from '@inertiajs/react';
 import { format } from 'date-fns';
@@ -25,6 +24,7 @@ import {
     Edit2,
     Eye,
     X,
+    RefreshCw,
 } from 'lucide-react';
 import DashboardLayout from '@/pages/Layouts/DashboardLayout';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -37,8 +37,11 @@ interface CustomerSupportTicket {
     formatted_subject: string;
     message: string;
     image: string | null;
+    status: string;
+    admin_response: string | null;
     created_at: string;
     updated_at: string;
+    resolved_at: string | null;
     consumer: {
         name: string;
         account_number: string;
@@ -51,57 +54,72 @@ interface CustomerSupportTicket {
 
 interface Props {
     ticket: CustomerSupportTicket;
-    canRespond?: boolean; // whether current user can add admin response
+    canRespond?: boolean;
 }
 
-const statusConfig = {
+const statusConfig: Record<
+    string,
+    { label: string; icon: React.ElementType; color: string; bgColor: string }
+> = {
     pending: {
         label: 'Pending',
         icon: Clock,
-        color: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+        color: 'text-yellow-700',
+        bgColor: 'bg-yellow-50 border-yellow-200',
     },
     in_progress: {
         label: 'In Progress',
-        icon: AlertCircle,
-        color: 'bg-blue-100 text-blue-800 border-blue-200',
+        icon: RefreshCw,
+        color: 'text-blue-700',
+        bgColor: 'bg-blue-50 border-blue-200',
     },
     resolved: {
         label: 'Resolved',
         icon: CheckCircle,
-        color: 'bg-green-100 text-green-800 border-green-200',
+        color: 'text-green-700',
+        bgColor: 'bg-green-50 border-green-200',
     },
-    closed: {
-        label: 'Closed',
+    rejected: {
+        label: 'Rejected',
         icon: XCircle,
-        color: 'bg-gray-100 text-gray-800 border-gray-200',
+        color: 'text-red-700',
+        bgColor: 'bg-red-50 border-red-200',
     },
 };
 
-const subjectConfig = {
+const subjectConfig: Record<
+    string,
+    { label: string; icon: React.ElementType; color: string; bgColor: string }
+> = {
     appreciation: {
         label: 'Appreciation',
         icon: Star,
-        color: 'bg-amber-100 text-amber-800 border-amber-200',
+        color: 'text-amber-700',
+        bgColor: 'bg-amber-50 border-amber-200',
     },
     complaint: {
         label: 'Complaint',
         icon: AlertCircle,
-        color: 'bg-rose-100 text-rose-800 border-rose-200',
+        color: 'text-rose-700',
+        bgColor: 'bg-rose-50 border-rose-200',
     },
     suggestion: {
         label: 'Suggestion',
         icon: MessageSquare,
-        color: 'bg-sky-100 text-sky-800 border-sky-200',
+        color: 'text-sky-700',
+        bgColor: 'bg-sky-50 border-sky-200',
     },
     inquiry: {
         label: 'Inquiry',
         icon: HelpCircle,
-        color: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+        color: 'text-emerald-700',
+        bgColor: 'bg-emerald-50 border-emerald-200',
     },
     other: {
         label: 'Other',
         icon: MoreHorizontal,
-        color: 'bg-gray-100 text-gray-800 border-gray-200',
+        color: 'text-gray-700',
+        bgColor: 'bg-gray-50 border-gray-200',
     },
 };
 
@@ -112,8 +130,11 @@ export default function CustomerSupportShow({
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [isEditingResponse, setIsEditingResponse] = useState(false);
+    const [response, setResponse] = useState(ticket.admin_response || '');
+    const [selectedStatus, setSelectedStatus] = useState(ticket.status);
+    const [isUpdating, setIsUpdating] = useState(false);
 
-    const formatDate = (date: string) => {
+    const formatDate = (date: string | null) => {
         if (!date) return 'N/A';
         return format(new Date(date), 'MMMM dd, yyyy h:mm a');
     };
@@ -122,6 +143,46 @@ export default function CustomerSupportShow({
         setPreviewImage(imageUrl);
         setPreviewOpen(true);
     };
+
+    const handleUpdateTicket = async () => {
+        if (!response.trim() && selectedStatus === ticket.status) {
+            toast.error('Please add a response or change status');
+            return;
+        }
+
+        setIsUpdating(true);
+
+        try {
+            router.patch(
+                `/customer-support/${ticket.id}`,
+                {
+                    admin_response: response,
+                    status: selectedStatus,
+                },
+                {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        toast.success('Ticket updated successfully');
+                        setIsEditingResponse(false);
+                    },
+                    onError: (errors) => {
+                        console.error('Update error:', errors);
+                        toast.error('Failed to update ticket');
+                    },
+                    onFinish: () => {
+                        setIsUpdating(false);
+                    },
+                },
+            );
+        } catch (error) {
+            console.error('Error updating ticket:', error);
+            toast.error('Failed to update ticket');
+            setIsUpdating(false);
+        }
+    };
+
+    const StatusIcon = statusConfig[selectedStatus]?.icon || Clock;
+    const SubjectIcon = subjectConfig[ticket.subject]?.icon || HelpCircle;
 
     return (
         <DashboardLayout>
@@ -142,6 +203,25 @@ export default function CustomerSupportShow({
                     <div className="p-6 lg:p-8">
                         {/* Header with subject and status */}
                         <div className="mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 pb-6">
+                            <div className="flex flex-wrap gap-2">
+                                {/* Subject Badge */}
+                                <span
+                                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium ${subjectConfig[ticket.subject]?.bgColor} ${subjectConfig[ticket.subject]?.color}`}
+                                >
+                                    <SubjectIcon className="h-4 w-4" />
+                                    {subjectConfig[ticket.subject]?.label ||
+                                        ticket.subject}
+                                </span>
+
+                                {/* Status Badge */}
+                                <span
+                                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium ${statusConfig[selectedStatus]?.bgColor} ${statusConfig[selectedStatus]?.color}`}
+                                >
+                                    <StatusIcon className="h-4 w-4" />
+                                    {statusConfig[selectedStatus]?.label ||
+                                        selectedStatus}
+                                </span>
+                            </div>
                             <div className="text-sm text-gray-500">
                                 <span className="flex items-center gap-1">
                                     <Calendar className="h-4 w-4" />
@@ -283,11 +363,74 @@ export default function CustomerSupportShow({
                                     </div>
                                 </div>
 
-                                {/* Status History (optional) - could be added if needed */}
-                                <div className="text-right text-xs text-gray-400">
-                                    Last updated:{' '}
-                                    {formatDate(ticket.updated_at)}
+                                {/* Status Update Section */}
+                                {/* Status Update Section */}
+                                <div>
+                                    <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                                        <RefreshCw className="h-5 w-5 text-blue-500" />
+                                        Update Status
+                                    </h2>
+                                    <div className="rounded-xl border border-gray-100 bg-white p-4">
+                                        <p className="mb-3 text-sm font-medium text-gray-500">
+                                            Select a status
+                                        </p>
+
+                                        <div className="flex flex-wrap gap-3">
+                                            {(
+                                                [
+                                                    'pending',
+                                                    'in_progress',
+                                                    'resolved',
+                                                    'rejected',
+                                                ] as const
+                                            ).map((s) => {
+                                                const cfg = statusConfig[s];
+                                                const isActive =
+                                                    selectedStatus === s;
+                                                return (
+                                                    <button
+                                                        key={s}
+                                                        onClick={() =>
+                                                            setSelectedStatus(s)
+                                                        }
+                                                        disabled={isUpdating}
+                                                        className={`flex items-center gap-2 rounded-xl border-[1.5px] px-4 py-2.5 text-sm font-medium transition-all ${
+                                                            isActive
+                                                                ? `${cfg.bgColor} ${cfg.color} border-current`
+                                                                : 'border-transparent bg-gray-50 text-gray-500 hover:border-gray-200'
+                                                        }`}
+                                                    >
+                                                        {cfg.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="mt-4 flex items-center gap-3">
+                                            <button
+                                                onClick={handleUpdateTicket}
+                                                disabled={
+                                                    isUpdating ||
+                                                    selectedStatus ===
+                                                        ticket.status
+                                                }
+                                                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                                            >
+                                                {isUpdating
+                                                    ? 'Updating...'
+                                                    : 'Update status'}
+                                            </button>
+                                        </div>
+
+                                        {ticket.resolved_at && (
+                                            <p className="mt-3 text-xs text-green-600">
+                                                Resolved on:{' '}
+                                                {formatDate(ticket.resolved_at)}
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
+
                             </div>
                         </div>
                     </div>

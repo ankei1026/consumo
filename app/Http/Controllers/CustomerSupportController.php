@@ -31,13 +31,13 @@ class CustomerSupportController extends Controller
             // Search by consumer name, account number, or message
             if ($request->has('search') && $request->search) {
                 $search = $request->search;
-                $query->where(function($q) use ($search) {
-                    $q->whereHas('consumer', function($cq) use ($search) {
+                $query->where(function ($q) use ($search) {
+                    $q->whereHas('consumer', function ($cq) use ($search) {
                         $cq->where('name', 'like', "%{$search}%")
-                           ->orWhere('account_number', 'like', "%{$search}%")
-                           ->orWhere('custcode', 'like', "%{$search}%");
+                            ->orWhere('account_number', 'like', "%{$search}%")
+                            ->orWhere('custcode', 'like', "%{$search}%");
                     })->orWhere('message', 'like', "%{$search}%")
-                      ->orWhere('subject', 'like', "%{$search}%");
+                        ->orWhere('subject', 'like', "%{$search}%");
                 });
             }
 
@@ -86,7 +86,6 @@ class CustomerSupportController extends Controller
                 'tickets' => $tickets,
                 'filters' => $filters,
             ]);
-
         } catch (\Exception $e) {
             Log::error('Error fetching support tickets: ' . $e->getMessage());
 
@@ -124,7 +123,6 @@ class CustomerSupportController extends Controller
             return Inertia::render('CustomerSupport/Show', [
                 'ticket' => $formattedTicket,
             ]);
-
         } catch (\Exception $e) {
             Log::error('Error fetching support ticket: ' . $e->getMessage());
 
@@ -136,26 +134,45 @@ class CustomerSupportController extends Controller
     /**
      * Update the specified support ticket.
      */
+    // In CustomerSupportController.php update method
     public function update(Request $request, $id)
     {
         try {
             $ticket = CustomerSupport::findOrFail($id);
 
             $validated = $request->validate([
-                'admin_response' => 'nullable|string',
-                'status' => 'required|in:pending,in_progress,resolved,closed',
+                'status' => 'required|in:pending,in_progress,resolved,rejected',
             ]);
 
-            $ticket->update([
-                'admin_response' => $validated['admin_response'],
+            $updateData = [
                 'status' => $validated['status'],
-                'resolved_at' => $validated['status'] === 'resolved' ? now() : $ticket->resolved_at,
-            ]);
+            ];
+
+            // Set resolved_at when status is resolved
+            if ($validated['status'] === 'resolved') {
+                $updateData['resolved_at'] = now();
+            }
+
+            $ticket->update($updateData);
+
+            if (request()->wantsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Ticket updated successfully',
+                    'data' => $ticket
+                ]);
+            }
 
             return redirect()->back()->with('success', 'Ticket updated successfully');
-
         } catch (\Exception $e) {
             Log::error('Error updating support ticket: ' . $e->getMessage());
+
+            if (request()->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to update ticket'
+                ], 500);
+            }
 
             return back()->with('error', 'Failed to update ticket');
         }
@@ -178,7 +195,6 @@ class CustomerSupportController extends Controller
 
             return redirect()->route('customer-support.index')
                 ->with('success', 'Ticket deleted successfully');
-
         } catch (\Exception $e) {
             Log::error('Error deleting support ticket: ' . $e->getMessage());
 
