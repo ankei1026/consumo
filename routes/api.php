@@ -5,7 +5,7 @@ use App\Http\Controllers\Api\ConsumerCustomerSupportController;
 use App\Http\Controllers\Api\ConsumerPublicAdvisoryController;
 use App\Http\Controllers\Api\ConsumerReportController;
 use App\Http\Controllers\Api\ConsumerWaterConsumptionController;
-use App\Http\Controllers\SearchController;
+use App\Http\Controllers\Api\SearchController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -61,4 +61,5 @@ Route::prefix('consumer')->middleware('auth:sanctum')->group(function () {
     Route::get('/support-tickets', [ConsumerCustomerSupportController::class, 'index']);
     Route::post('/support-tickets', [ConsumerCustomerSupportController::class, 'store']);
     Route::get('/support-tickets/{id}', [ConsumerCustomerSupportController::class, 'show']);
+
 });

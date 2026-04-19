@@ -16,7 +16,8 @@ class CustomerSupport extends Model
         'status',
         'admin_response',
         'resolved_at',
-        'responded_by'
+        'responded_by',
+        'admin_feedback',
     ];
 
     protected $casts = [

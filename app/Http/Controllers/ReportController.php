@@ -46,6 +46,7 @@ class ReportController extends Controller
                     'content' => $report->content,
                     'image' => $report->image ? asset('storage/' . $report->image) : null,
                     'status' => $report->status,
+                    'admin_feedback' => $report->admin_feedback,
                     'created_at' => $report->created_at,
                     'updated_at' => $report->updated_at,
                     'consumer' => $report->consumer ? [
@@ -102,6 +103,7 @@ class ReportController extends Controller
             'image' => $report->image ? asset('storage/' . $report->image) : null,
             'created_at' => $report->created_at,
             'status' => $report->status,
+            'admin_feedback' => $report->admin_feedback,
             'updated_at' => $report->updated_at,
             'consumer' => $report->consumer ? [
                 'name' => $report->consumer->name,
@@ -544,12 +546,16 @@ class ReportController extends Controller
     /**
      * Update report status
      */
+    /**
+     * Update report status
+     */
     public function updateStatus(Request $request, $id)
     {
         try {
             Log::info('updateStatus called', [
                 'id' => $id,
                 'status' => $request->status,
+                'admin_feedback' => $request->admin_feedback,
                 'user_id' => auth()->id()
             ]);
 
@@ -574,49 +580,64 @@ class ReportController extends Controller
             }
 
             $validated = $request->validate([
-                'status' => 'required|in:pending,ongoing,resolved,closed,rejected',
+                'status' => 'sometimes|required|in:pending,ongoing,resolved,closed,rejected',
                 'resolution_notes' => 'nullable|string|max:1000',
+                'admin_feedback' => 'nullable|string|max:5000',
             ]);
 
             $report = Report::findOrFail($id);
 
             Log::info('Before update - Current status: ' . $report->status);
+            Log::info('Before update - Current admin_feedback: ' . $report->admin_feedback);
 
-            $updateData = [
-                'status' => $validated['status'],
-            ];
+            $updateData = [];
 
-            // If status is resolved, set resolved_at
-            if ($validated['status'] === 'resolved') {
-                $updateData['resolved_at'] = now();
-                $updateData['resolved_by'] = $user->id;
-                $updateData['resolution_notes'] = $validated['resolution_notes'] ?? null;
-            }
-            // If status is closed or rejected, also set resolved_at if not already set
-            elseif (in_array($validated['status'], ['closed', 'rejected']) && !$report->resolved_at) {
-                $updateData['resolved_at'] = now();
-                $updateData['resolved_by'] = $user->id;
-                if ($validated['resolution_notes']) {
-                    $updateData['resolution_notes'] = $validated['resolution_notes'];
+            // Update status if provided
+            if ($request->has('status')) {
+                $updateData['status'] = $validated['status'];
+
+                // If status is resolved, set resolved_at
+                if ($validated['status'] === 'resolved') {
+                    $updateData['resolved_at'] = now();
+                    $updateData['resolved_by'] = $user->id;
+                    if ($request->has('resolution_notes')) {
+                        $updateData['resolution_notes'] = $validated['resolution_notes'] ?? null;
+                    }
+                }
+                // If status is closed or rejected, also set resolved_at if not already set
+                elseif (in_array($validated['status'], ['closed', 'rejected']) && !$report->resolved_at) {
+                    $updateData['resolved_at'] = now();
+                    $updateData['resolved_by'] = $user->id;
+                    if ($request->has('resolution_notes')) {
+                        $updateData['resolution_notes'] = $validated['resolution_notes'] ?? null;
+                    }
+                }
+                // If status is changed to pending or ongoing, clear resolved fields
+                elseif (in_array($validated['status'], ['pending', 'ongoing'])) {
+                    $updateData['resolved_at'] = null;
+                    $updateData['resolved_by'] = null;
+                    $updateData['resolution_notes'] = null;
                 }
             }
-            // If status is changed to pending or ongoing, clear resolved fields
-            elseif (in_array($validated['status'], ['pending', 'ongoing'])) {
-                $updateData['resolved_at'] = null;
-                $updateData['resolved_by'] = null;
-                $updateData['resolution_notes'] = null;
+
+            // Update admin feedback if provided
+            if ($request->has('admin_feedback')) {
+                $updateData['admin_feedback'] = $validated['admin_feedback'];
             }
 
-            $report->update($updateData);
-
-            // Refresh the report to get updated data
-            $report->refresh();
+            // Only update if there are changes
+            if (!empty($updateData)) {
+                $report->update($updateData);
+                // Refresh the report to get updated data
+                $report->refresh();
+            }
 
             Log::info('After update - New status: ' . $report->status);
+            Log::info('After update - New admin_feedback: ' . $report->admin_feedback);
             Log::info('After update - resolved_at: ' . $report->resolved_at);
             Log::info('After update - resolution_notes: ' . $report->resolution_notes);
 
-            $message = 'Report status updated successfully';
+            $message = $request->has('admin_feedback') ? 'Admin feedback updated successfully' : 'Report status updated successfully';
 
             if ($request->wantsJson()) {
                 return response()->json([
@@ -629,6 +650,7 @@ class ReportController extends Controller
                         'status_color' => $report->status_color,
                         'resolved_at' => $report->resolved_at,
                         'resolution_notes' => $report->resolution_notes,
+                        'admin_feedback' => $report->admin_feedback,
                     ]
                 ]);
             }
@@ -636,13 +658,14 @@ class ReportController extends Controller
             // For Inertia requests, redirect back with success message and updated data
             return redirect()->back()->with([
                 'success' => $message,
-                'updated_status' => $validated['status']
+                'updated_status' => $report->status ?? null,
+                'updated_feedback' => $report->admin_feedback ?? null,
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to update report status: ' . $e->getMessage());
+            Log::error('Failed to update report: ' . $e->getMessage());
             Log::error('Stack trace: ' . $e->getTraceAsString());
 
-            $message = 'Failed to update report status: ' . $e->getMessage();
+            $message = 'Failed to update report: ' . $e->getMessage();
 
             if ($request->wantsJson()) {
                 return response()->json(['success' => false, 'message' => $message], 500);
@@ -687,5 +710,12 @@ class ReportController extends Controller
                 'message' => 'Failed to get status history'
             ], 500);
         }
+    }
+
+    public function destroy($id)
+    {
+        $report = Report::findOrFail($id);
+        $report->delete();
+        return redirect()->route('reports.index')->with('success', 'Report deleted successfully.');
     }
 }

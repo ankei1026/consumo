@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 use App\Models\Consumer;
 use App\Models\WaterConsumption;
 use App\Models\PublicAdvisory;
+use App\Models\Report;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\Log;
@@ -16,6 +17,9 @@ class DashboardController extends Controller
     public function index()
     {
         $consumers = Consumer::count();
+
+        // Get total reports count
+        $totalReports = Report::count();
 
         // Get current year
         $currentYear = Carbon::now()->year;
@@ -105,6 +109,7 @@ class DashboardController extends Controller
         // Log what we're sending
         Log::info('DashboardController: Sending data', [
             'consumers_count' => $consumers,
+            'total_reports' => $totalReports,
             'total_consumption' => $totalConsumption,
             'monthly_data' => $monthlyData,
             'advisories_count' => $publicAdvisories->count(),
@@ -113,6 +118,7 @@ class DashboardController extends Controller
 
         return Inertia::render('Dashboard/Index', [
             'consumers' => $consumers,
+            'totalReports' => $totalReports,
             'publicAdvisories' => $publicAdvisories,
             'totalConsumption' => $totalConsumption,
             'monthlyData' => array_values($monthlyData), // Convert to indexed array for easier use in JS

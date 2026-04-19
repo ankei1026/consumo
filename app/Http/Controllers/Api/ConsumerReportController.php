@@ -66,6 +66,7 @@ class ConsumerReportController extends Controller
                 'image' => $imagePath,
                 'content' => $request->content,
                 'water_consumption_id' => $request->water_consumption_id,
+                'status' => 'pending'
             ]);
 
             // Get historical consumption data for AI analysis
@@ -176,12 +177,22 @@ class ConsumerReportController extends Controller
                 return;
             }
 
+            // Prepare billing data
+            $billingData = [
+                'report_content' => $aiData['report_content'],
+                'consumption_records' => $aiData['consumption_records']
+            ];
+
             // Create multipart form data request
-            $response = Http::timeout(60)->attach(
-                'image',
-                file_get_contents($imagePath),
-                basename($imagePath)
-            )->post($aiApiUrl . '/analyze-leak', []);
+            $response = Http::timeout(60)
+                ->attach(
+                    'image',
+                    file_get_contents($imagePath),
+                    basename($imagePath)
+                )
+                ->post($aiApiUrl . '/analyze-leak', [
+                    'billing_data' => json_encode($billingData)
+                ]);
 
             if ($response->successful()) {
                 $aiResult = $response->json();
@@ -783,6 +794,9 @@ class ConsumerReportController extends Controller
             'created_at' => $report->created_at->toISOString(),
             'updated_at' => $report->updated_at->toISOString(),
             'status' => $report->status,
+            'admin_feedback' => $report->admin_feedback,
+            'resolution_notes' => $report->resolution_notes,
+            'resolved_at' => $report->resolved_at ? $report->resolved_at->toISOString() : null,
             'has_ai_analysis' => $report->aiResponse ? true : false,
             'ai_analysis_status' => $report->aiResponse ? 'completed' : 'pending',
             'water_consumption' => $report->waterConsumption ? $this->formatWaterConsumption($report->waterConsumption) : null,
@@ -822,7 +836,9 @@ class ConsumerReportController extends Controller
                     'id' => $report->id,
                     'image_url' => $report->image ? asset('storage/' . $report->image) : null,
                     'content' => $report->content,
-                    'created_at' => $report->created_at->toISOString()
+                    'created_at' => $report->created_at->toISOString(),
+                    'status' => $report->status,
+                    'admin_feedback' => $report->admin_feedback
                 ];
             })
         ];

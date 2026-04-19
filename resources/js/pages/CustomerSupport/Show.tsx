@@ -1,5 +1,5 @@
 // resources/js/Pages/CustomerSupport/Show.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, router } from '@inertiajs/react';
 import { format } from 'date-fns';
 import {
@@ -8,7 +8,6 @@ import {
     Mail,
     Phone,
     MapPin,
-    CreditCard,
     Calendar,
     MessageSquare,
     Image as ImageIcon,
@@ -25,6 +24,8 @@ import {
     Eye,
     X,
     RefreshCw,
+    Save,
+    Bot,
 } from 'lucide-react';
 import DashboardLayout from '@/pages/Layouts/DashboardLayout';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -39,6 +40,7 @@ interface CustomerSupportTicket {
     image: string | null;
     status: string;
     admin_response: string | null;
+    admin_feedback: string | null;
     created_at: string;
     updated_at: string;
     resolved_at: string | null;
@@ -127,12 +129,28 @@ export default function CustomerSupportShow({
     ticket,
     canRespond = true,
 }: Props) {
+    // Debug: Log the ticket data
+    useEffect(() => {
+        console.log('Ticket data received:', ticket);
+        console.log('Admin response value:', ticket.admin_response);
+        console.log('Admin feedback value:', ticket.admin_feedback);
+        console.log('Status:', ticket.status);
+    }, [ticket]);
+
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [isEditingResponse, setIsEditingResponse] = useState(false);
     const [response, setResponse] = useState(ticket.admin_response || '');
     const [selectedStatus, setSelectedStatus] = useState(ticket.status);
     const [isUpdating, setIsUpdating] = useState(false);
+    const [adminFeedback, setAdminFeedback] = useState(ticket.admin_feedback || '');
+    const [isSendingFeedback, setIsSendingFeedback] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    // Also log when response state changes
+    useEffect(() => {
+        console.log('Response state updated:', response);
+    }, [response]);
 
     const formatDate = (date: string | null) => {
         if (!date) return 'N/A';
@@ -144,40 +162,94 @@ export default function CustomerSupportShow({
         setPreviewOpen(true);
     };
 
-    const handleUpdateTicket = async () => {
-        if (!response.trim() && selectedStatus === ticket.status) {
-            toast.error('Please add a response or change status');
+    // Handle admin feedback submit
+    const handleSendFeedback = () => {
+        setIsSendingFeedback(true);
+        router.patch(
+            `/customer-support/${ticket.id}`,
+            { admin_feedback: adminFeedback },
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    toast.success('Admin feedback updated successfully');
+                    setIsSendingFeedback(false);
+                    router.reload({ preserveScroll: true });
+                },
+                onError: (errors) => {
+                    console.error('Feedback error:', errors);
+                    toast.error('Failed to update feedback');
+                    setIsSendingFeedback(false);
+                },
+            },
+        );
+    };
+
+    // Handle status update
+    const handleUpdateStatus = () => {
+        setIsUpdating(true);
+        router.patch(
+            `/customer-support/${ticket.id}`,
+            { status: selectedStatus },
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    toast.success('Ticket status updated successfully');
+                    router.reload({ preserveScroll: true });
+                },
+                onError: (errors) => {
+                    console.error('Update error:', errors);
+                    toast.error('Failed to update ticket status');
+                },
+                onFinish: () => {
+                    setIsUpdating(false);
+                },
+            },
+        );
+    };
+
+    // Handle admin response update
+    const handleUpdateResponse = () => {
+        if (!response.trim()) {
+            toast.error('Please enter a response');
             return;
         }
 
         setIsUpdating(true);
+        router.patch(
+            `/customer-support/${ticket.id}`,
+            { admin_response: response },
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    toast.success('Admin response updated successfully');
+                    setIsEditingResponse(false);
+                    router.reload({ preserveScroll: true });
+                },
+                onError: (errors) => {
+                    console.error('Response error:', errors);
+                    toast.error('Failed to update response');
+                },
+                onFinish: () => {
+                    setIsUpdating(false);
+                },
+            },
+        );
+    };
 
-        try {
-            router.patch(
-                `/customer-support/${ticket.id}`,
-                {
-                    admin_response: response,
-                    status: selectedStatus,
+    // Handle delete ticket
+    const handleDeleteTicket = () => {
+        if (confirm('Are you sure you want to delete this ticket?')) {
+            setIsDeleting(true);
+            router.delete(`/customer-support/${ticket.id}`, {
+                onSuccess: () => {
+                    toast.success('Ticket deleted successfully');
+                    router.visit('/customer-support');
                 },
-                {
-                    preserveScroll: true,
-                    onSuccess: () => {
-                        toast.success('Ticket updated successfully');
-                        setIsEditingResponse(false);
-                    },
-                    onError: (errors) => {
-                        console.error('Update error:', errors);
-                        toast.error('Failed to update ticket');
-                    },
-                    onFinish: () => {
-                        setIsUpdating(false);
-                    },
+                onError: () => {
+                    toast.error('Failed to delete ticket');
+                    setIsDeleting(false);
                 },
-            );
-        } catch (error) {
-            console.error('Error updating ticket:', error);
-            toast.error('Failed to update ticket');
-            setIsUpdating(false);
+            });
         }
     };
 
@@ -187,7 +259,7 @@ export default function CustomerSupportShow({
     return (
         <DashboardLayout>
             <div className="space-y-6">
-                {/* Header with back button */}
+                {/* Header with back button and delete button */}
                 <div className="flex items-center justify-between">
                     <Link
                         href="/customer-support"
@@ -196,6 +268,23 @@ export default function CustomerSupportShow({
                         <ArrowLeft className="h-4 w-4" />
                         Back to Customer Support
                     </Link>
+                    <button
+                        onClick={handleDeleteTicket}
+                        disabled={isDeleting}
+                        className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {isDeleting ? (
+                            <>
+                                <RefreshCw className="h-4 w-4 animate-spin" />
+                                Deleting...
+                            </>
+                        ) : (
+                            <>
+                                <X className="h-4 w-4" />
+                                Delete Ticket
+                            </>
+                        )}
+                    </button>
                 </div>
 
                 {/* Main Ticket Card */}
@@ -349,8 +438,9 @@ export default function CustomerSupportShow({
                                 )}
                             </div>
 
-                            {/* Right column: Message and Admin Response */}
+                            {/* Right column: Message, Admin Response, and Admin Feedback */}
                             <div className="space-y-6 lg:col-span-2">
+                                {/* Message */}
                                 <div>
                                     <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
                                         <MessageSquare className="h-5 w-5 text-blue-500" />
@@ -363,7 +453,72 @@ export default function CustomerSupportShow({
                                     </div>
                                 </div>
 
-                                {/* Status Update Section */}
+                                {/* Admin Response Section */}
+                                <div>
+                                    <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                                        <MessageSquare className="h-5 w-5 text-blue-500" />
+                                        Admin Feedback
+                                    </h2>
+                                    <div className="rounded-lg bg-gray-50 p-4">
+                                        {isEditingResponse ? (
+                                            <div className="space-y-3">
+                                                <textarea
+                                                    className="w-full rounded-lg border border-gray-300 p-3 text-gray-700 focus:ring focus:ring-gray-200"
+                                                    rows={4}
+                                                    value={response}
+                                                    onChange={e => setResponse(e.target.value)}
+                                                    placeholder="Type your response here..."
+                                                />
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={handleUpdateResponse}
+                                                        disabled={isUpdating}
+                                                        className="inline-flex items-center gap-2 rounded-lg bg-gray-600 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                                                    >
+                                                        {isUpdating ? (
+                                                            <>
+                                                                <RefreshCw className="h-4 w-4 animate-spin" />
+                                                                Saving...
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <Save className="h-4 w-4" />
+                                                                Save Response
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            setIsEditingResponse(false);
+                                                            setResponse(ticket.admin_response || '');
+                                                        }}
+                                                        className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div>
+                                                {ticket.admin_feedback ? (
+                                                    <div>
+                                                        <p className="whitespace-pre-line text-gray-700">
+                                                            {ticket.admin_feedback}
+                                                        </p>
+                                                    </div>
+                                                ) : (
+                                                    <div>
+                                                        <p className="text-gray-500 italic mb-3">
+                                                            No admin feedback yet.
+                                                        </p>
+
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
                                 {/* Status Update Section */}
                                 <div>
                                     <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
@@ -394,12 +549,13 @@ export default function CustomerSupportShow({
                                                             setSelectedStatus(s)
                                                         }
                                                         disabled={isUpdating}
-                                                        className={`flex items-center gap-2 rounded-xl border-[1.5px] px-4 py-2.5 text-sm font-medium transition-all ${
+                                                        className={`flex items-center gap-2 rounded-xl border-[1.5px] px-4 py-2 text-sm font-medium transition-all ${
                                                             isActive
                                                                 ? `${cfg.bgColor} ${cfg.color} border-current`
                                                                 : 'border-transparent bg-gray-50 text-gray-500 hover:border-gray-200'
                                                         }`}
                                                     >
+                                                        {React.createElement(cfg.icon, { className: 'h-4 w-4' })}
                                                         {cfg.label}
                                                     </button>
                                                 );
@@ -408,29 +564,63 @@ export default function CustomerSupportShow({
 
                                         <div className="mt-4 flex items-center gap-3">
                                             <button
-                                                onClick={handleUpdateTicket}
+                                                onClick={handleUpdateStatus}
                                                 disabled={
                                                     isUpdating ||
-                                                    selectedStatus ===
-                                                        ticket.status
+                                                    selectedStatus === ticket.status
                                                 }
-                                                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                                                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
                                             >
-                                                {isUpdating
-                                                    ? 'Updating...'
-                                                    : 'Update status'}
+                                                {isUpdating ? (
+                                                    <>
+                                                        <RefreshCw className="h-4 w-4 animate-spin" />
+                                                        Updating...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Save className="h-4 w-4" />
+                                                        Update Status
+                                                    </>
+                                                )}
                                             </button>
                                         </div>
 
-                                        {ticket.resolved_at && (
-                                            <p className="mt-3 text-xs text-green-600">
-                                                Resolved on:{' '}
-                                                {formatDate(ticket.resolved_at)}
-                                            </p>
-                                        )}
                                     </div>
                                 </div>
 
+                                {/* Admin Feedback Section */}
+                                <div>
+                                    <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                                        <Bot className="h-5 w-5 text-blue-500" />
+                                        Admin Feedback
+                                    </h2>
+                                    <div className="rounded-lg bg-blue-50 p-4">
+                                        <textarea
+                                            className="w-full rounded-lg border border-gray-300 p-3 text-gray-700 focus:ring focus:ring-blue-200"
+                                            rows={3}
+                                            value={adminFeedback}
+                                            onChange={e => setAdminFeedback(e.target.value)}
+                                            placeholder="Add admin feedback or internal notes here..."
+                                        />
+                                        <button
+                                            className="mt-3 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                                            onClick={handleSendFeedback}
+                                            disabled={isSendingFeedback}
+                                        >
+                                            {isSendingFeedback ? (
+                                                <>
+                                                    <RefreshCw className="h-4 w-4 animate-spin" />
+                                                    Sending...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Send className="h-4 w-4" />
+                                                    Send Feedback
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

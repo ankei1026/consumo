@@ -16,6 +16,12 @@ class ConsumerAuthController extends Controller
      */
     public function login(Request $request)
     {
+
+        Log::info('Flutter login attempt', [
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'data' => $request->all()
+        ]);
         try {
             Log::info('=== LOGIN START ===');
 
@@ -78,7 +84,6 @@ class ConsumerAuthController extends Controller
                     ]
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('Login error: ' . $e->getMessage());
             Log::error($e->getTraceAsString());
@@ -127,7 +132,6 @@ class ConsumerAuthController extends Controller
                     ]
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('Profile error: ' . $e->getMessage());
             Log::error($e->getTraceAsString());
@@ -193,7 +197,6 @@ class ConsumerAuthController extends Controller
                     ]
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('Update profile error: ' . $e->getMessage());
             Log::error($e->getTraceAsString());
@@ -229,7 +232,6 @@ class ConsumerAuthController extends Controller
                 'success' => true,
                 'message' => 'Logged out successfully'
             ]);
-
         } catch (\Exception $e) {
             Log::error('Logout error: ' . $e->getMessage());
 

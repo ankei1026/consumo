@@ -15,6 +15,7 @@ class Report extends Model
         'content',
         'water_consumption_id',
         'status',
+        'admin_feedback',
     ];
 
     protected $casts = [

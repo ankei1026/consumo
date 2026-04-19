@@ -82,6 +82,7 @@ class ConsumerCustomerSupportController extends Controller
                 'subject' => $request->subject,
                 'message' => $request->message,
                 'image' => $imagePath,
+                'status' => 'pending'
             ]);
 
             $admins = User::where('role', 'admin')->get();
@@ -150,6 +151,7 @@ class ConsumerCustomerSupportController extends Controller
             'message' => $ticket->message,
             'image' => $ticket->image ? asset('storage/' . $ticket->image) : null,
             'status' => $ticket->status ?? 'pending',
+            'admin_feedback' => $ticket->admin_feedback,
             'created_at' => $ticket->created_at->toISOString(),
             'updated_at' => $ticket->updated_at->toISOString(),
             'resolved_at' => $ticket->resolved_at ? $ticket->resolved_at->toISOString() : null,

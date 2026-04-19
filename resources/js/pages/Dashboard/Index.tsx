@@ -69,6 +69,7 @@ interface RecentConsumption {
 
 interface DashboardProps {
     consumers?: number;
+    totalReports?: number;
     publicAdvisories?: PublicAdvisory[];
     totalConsumption?: number;
     monthlyData?: number[];
@@ -84,6 +85,7 @@ interface DashboardProps {
 
 export default function Dashboard({
     consumers,
+    totalReports = 0,
     publicAdvisories = [],
     totalConsumption = 0,
     monthlyData = [],
@@ -93,6 +95,32 @@ export default function Dashboard({
     currentYear = new Date().getFullYear(),
 }: DashboardProps) {
     const [consumerCount, setConsumerCount] = useState(0);
+    const [reportsCount, setReportsCount] = useState(0);
+
+    // Helper function to format large numbers (millions, billions, etc.)
+    const formatLargeNumber = (num: number): string => {
+        if (num >= 1_000_000_000) {
+            return `${(num / 1_000_000_000).toFixed(1)}B`;
+        }
+        if (num >= 1_000_000) {
+            return `${(num / 1_000_000).toFixed(1)}M`;
+        }
+        if (num >= 1_000) {
+            return `${(num / 1_000).toFixed(1)}K`;
+        }
+        return num.toString();
+    };
+
+    // Helper function to format consumption value with proper units
+    const formatConsumptionValue = (num: number): string => {
+        if (num >= 1_000_000) {
+            return `${(num / 1_000_000).toFixed(2)}M m³`;
+        }
+        if (num >= 1_000) {
+            return `${(num / 1_000).toFixed(1)}K m³`;
+        }
+        return `${num.toLocaleString()} m³`;
+    };
 
     useEffect(() => {
         if (typeof consumers === 'number') {
@@ -104,7 +132,16 @@ export default function Dashboard({
         } else {
             setConsumerCount(0);
         }
-    }, [consumers]);
+
+        // Set total reports count
+        if (typeof totalReports === 'number') {
+            setReportsCount(totalReports);
+        } else if (typeof totalReports === 'string') {
+            setReportsCount(parseInt(totalReports) || 0);
+        } else {
+            setReportsCount(0);
+        }
+    }, [consumers, totalReports]);
 
     // Prepare monthly chart data
     const months = [
@@ -150,24 +187,23 @@ export default function Dashboard({
 
     const stats = [
         {
-            name: 'Total Records',
-            value: recentConsumptions.length.toString(),
+            name: 'Total Reports',
+            value: reportsCount.toLocaleString(),
             icon: FileText,
-            change: '+12%',
+            change: 'All time',
             color: 'blue',
         },
         {
             name: 'Active Consumers',
-            value: consumerCount.toString(),
+            value: consumerCount.toLocaleString(),
             icon: Users,
-            change: '+5%',
+            change: 'Current',
             color: 'blue',
         },
         {
             name: 'Total Consumption',
-            value: `${totalConsumption.toLocaleString()} m³`,
+            value: formatConsumptionValue(totalConsumption),
             icon: Droplets,
-            change: `${percentageChange > 0 ? '+' : ''}${percentageChange}%`,
             color: 'blue',
             subtext: `Year ${currentYear}`,
         },
@@ -252,6 +288,26 @@ export default function Dashboard({
         .filter((advisory) => advisory.status !== 'done')
         .slice(0, 2);
 
+    // Custom tooltip for chart to show formatted numbers
+    const CustomTooltip = ({ active, payload, label }: any) => {
+        if (active && payload && payload.length) {
+            return (
+                <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
+                    <p className="mb-1 text-sm font-semibold text-gray-900">
+                        {label}
+                    </p>
+                    <p className="text-sm text-blue-600">
+                        Consumption:{' '}
+                        <span className="font-bold">
+                            {formatConsumptionValue(payload[0].value)}
+                        </span>
+                    </p>
+                </div>
+            );
+        }
+        return null;
+    };
+
     return (
         <DashboardLayout>
             <motion.div
@@ -304,6 +360,11 @@ export default function Dashboard({
                                         {stat.subtext}
                                     </p>
                                 )}
+                                {stat.change && (
+                                    <p className="mt-1 text-xs text-gray-400">
+                                        {stat.change}
+                                    </p>
+                                )}
                             </div>
                         </motion.div>
                     ))}
@@ -342,6 +403,15 @@ export default function Dashboard({
                                     <YAxis
                                         stroke="#6B7280"
                                         tick={{ fontSize: 12 }}
+                                        tickFormatter={(value) => {
+                                            if (value >= 1_000_000) {
+                                                return `${(value / 1_000_000).toFixed(1)}M`;
+                                            }
+                                            if (value >= 1_000) {
+                                                return `${(value / 1_000).toFixed(0)}K`;
+                                            }
+                                            return value.toString();
+                                        }}
                                         label={{
                                             value: 'Consumption (m³)',
                                             angle: -90,
@@ -352,18 +422,7 @@ export default function Dashboard({
                                             },
                                         }}
                                     />
-                                    <Tooltip
-                                        contentStyle={{
-                                            backgroundColor: 'white',
-                                            border: '1px solid #E5E7EB',
-                                            borderRadius: '8px',
-                                            padding: '8px 12px',
-                                        }}
-                                        formatter={(value: number) => [
-                                            `${value.toLocaleString()} m³`,
-                                            'Consumption',
-                                        ]}
-                                    />
+                                    <Tooltip content={<CustomTooltip />} />
                                     <Legend />
                                     <Line
                                         type="monotone"
@@ -375,7 +434,7 @@ export default function Dashboard({
                                             strokeWidth: 2,
                                         }}
                                         activeDot={{ r: 6 }}
-                                        name="Water Consumption (m³)"
+                                        name="Water Consumption"
                                     />
                                 </LineChart>
                             </ResponsiveContainer>
@@ -421,7 +480,7 @@ export default function Dashboard({
                                         </Pie>
                                         <Tooltip
                                             formatter={(value: number) => [
-                                                `${value.toLocaleString()} m³`,
+                                                formatConsumptionValue(value),
                                                 'Consumption',
                                             ]}
                                         />
@@ -456,7 +515,7 @@ export default function Dashboard({
                                             className="text-sm font-semibold"
                                             style={{ color: item.color }}
                                         >
-                                            {item.value.toLocaleString()} m³
+                                            {formatConsumptionValue(item.value)}
                                         </p>
                                     </div>
                                 );
@@ -519,7 +578,7 @@ export default function Dashboard({
                                                         {record.consumer_name}
                                                     </p>
                                                     <p className="text-xs text-gray-500">
-                                                        custcode: {record.consumer_code}
+                                                        ID: {record.consumer_code}
                                                     </p>
                                                 </div>
                                             </td>
@@ -532,13 +591,13 @@ export default function Dashboard({
                                             <td className="px-4 py-3 text-right">
                                                 <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-1 text-sm font-semibold text-blue-700">
                                                     <Droplets className="h-3 w-3" />
-                                                    {record.consumption} m³
+                                                    {formatConsumptionValue(record.consumption)}
                                                 </span>
                                             </td>
                                         </tr>
                                     ))}
                                 </tbody>
-                            </table>
+                             </table>
                         </div>
                     ) : (
                         <div className="flex h-48 items-center justify-center rounded-lg border-2 border-dashed border-gray-200 bg-gray-50">

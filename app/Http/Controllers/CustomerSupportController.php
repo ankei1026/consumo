@@ -62,7 +62,10 @@ class CustomerSupportController extends Controller
                     'image' => $ticket->image ? asset('storage/' . $ticket->image) : null,
                     'status' => $ticket->status ?? 'pending',
                     'admin_response' => $ticket->admin_response,
+                    'admin_feedback' => $ticket->admin_feedback,
                     'created_at' => $ticket->created_at,
+                    'updated_at' => $ticket->updated_at,
+                    'resolved_at' => $ticket->resolved_at,
                     'consumer' => $ticket->consumer ? [
                         'name' => $ticket->consumer->name,
                         'account_number' => $ticket->consumer->account_number,
@@ -110,13 +113,17 @@ class CustomerSupportController extends Controller
                 'image' => $ticket->image ? asset('storage/' . $ticket->image) : null,
                 'status' => $ticket->status ?? 'pending',
                 'admin_response' => $ticket->admin_response,
+                'admin_feedback' => $ticket->admin_feedback,
                 'created_at' => $ticket->created_at,
+                'updated_at' => $ticket->updated_at,
+                'resolved_at' => $ticket->resolved_at,
                 'consumer' => $ticket->consumer ? [
                     'name' => $ticket->consumer->name,
                     'account_number' => $ticket->consumer->account_number,
                     'meter_number' => $ticket->consumer->meter_number,
                     'mobile_number' => $ticket->consumer->mobile_number,
                     'address' => $ticket->consumer->address,
+                    'email' => $ticket->consumer->email ?? null,
                 ] : null,
             ];
 
@@ -134,47 +141,111 @@ class CustomerSupportController extends Controller
     /**
      * Update the specified support ticket.
      */
-    // In CustomerSupportController.php update method
     public function update(Request $request, $id)
     {
         try {
             $ticket = CustomerSupport::findOrFail($id);
 
-            $validated = $request->validate([
-                'status' => 'required|in:pending,in_progress,resolved,rejected',
+            Log::info('Updating ticket', [
+                'id' => $id,
+                'request_data' => $request->all(),
+                'has_admin_response' => $request->has('admin_response'),
+                'has_admin_feedback' => $request->has('admin_feedback'),
+                'has_status' => $request->has('status')
             ]);
 
-            $updateData = [
-                'status' => $validated['status'],
-            ];
+            $validated = $request->validate([
+                'status' => 'sometimes|required|in:pending,in_progress,resolved,rejected',
+                'admin_response' => 'nullable|string|max:5000',
+                'admin_feedback' => 'nullable|string|max:5000',
+                'resolution_notes' => 'nullable|string|max:1000',
+            ]);
 
-            // Set resolved_at when status is resolved
-            if ($validated['status'] === 'resolved') {
-                $updateData['resolved_at'] = now();
+            $updateData = [];
+
+            // Update status if provided
+            if ($request->has('status')) {
+                $updateData['status'] = $validated['status'];
+
+                // Set resolved_at when status is resolved
+                if ($validated['status'] === 'resolved' && !$ticket->resolved_at) {
+                    $updateData['resolved_at'] = now();
+                }
+                // Clear resolved_at if status is not resolved
+                elseif ($validated['status'] !== 'resolved') {
+                    $updateData['resolved_at'] = null;
+                }
             }
 
-            $ticket->update($updateData);
+            // Update admin response if provided
+            if ($request->has('admin_response')) {
+                $updateData['admin_response'] = $validated['admin_response'];
+                Log::info('Setting admin_response', ['response' => $validated['admin_response']]);
+            }
 
-            if (request()->wantsJson()) {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Ticket updated successfully',
-                    'data' => $ticket
+            // Update admin feedback if provided
+            if ($request->has('admin_feedback')) {
+                $updateData['admin_feedback'] = $validated['admin_feedback'];
+                Log::info('Setting admin_feedback', ['feedback' => $validated['admin_feedback']]);
+            }
+
+            // Update resolution notes if provided
+            if ($request->has('resolution_notes')) {
+                $updateData['resolution_notes'] = $validated['resolution_notes'];
+            }
+
+            // Only update if there are changes
+            if (!empty($updateData)) {
+                $ticket->update($updateData);
+                $ticket->refresh();
+
+                Log::info('Ticket updated successfully', [
+                    'id' => $ticket->id,
+                    'new_status' => $ticket->status,
+                    'new_admin_response' => $ticket->admin_response,
+                    'new_admin_feedback' => $ticket->admin_feedback
                 ]);
             }
 
-            return redirect()->back()->with('success', 'Ticket updated successfully');
+            $message = '';
+            if ($request->has('admin_feedback')) {
+                $message = 'Admin feedback updated successfully';
+            } elseif ($request->has('admin_response')) {
+                $message = 'Admin response updated successfully';
+            } elseif ($request->has('status')) {
+                $message = 'Ticket status updated successfully';
+            } else {
+                $message = 'Ticket updated successfully';
+            }
+
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => $message,
+                    'data' => [
+                        'id' => $ticket->id,
+                        'status' => $ticket->status,
+                        'admin_response' => $ticket->admin_response,
+                        'admin_feedback' => $ticket->admin_feedback,
+                        'resolved_at' => $ticket->resolved_at,
+                    ]
+                ]);
+            }
+
+            // For Inertia requests, redirect back with success message
+            return redirect()->back()->with('success', $message);
         } catch (\Exception $e) {
             Log::error('Error updating support ticket: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
 
-            if (request()->wantsJson()) {
+            if ($request->wantsJson()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Failed to update ticket'
+                    'message' => 'Failed to update ticket: ' . $e->getMessage()
                 ], 500);
             }
 
-            return back()->with('error', 'Failed to update ticket');
+            return back()->with('error', 'Failed to update ticket: ' . $e->getMessage());
         }
     }
 
@@ -193,10 +264,24 @@ class CustomerSupportController extends Controller
 
             $ticket->delete();
 
+            if (request()->wantsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Ticket deleted successfully'
+                ]);
+            }
+
             return redirect()->route('customer-support.index')
                 ->with('success', 'Ticket deleted successfully');
         } catch (\Exception $e) {
             Log::error('Error deleting support ticket: ' . $e->getMessage());
+
+            if (request()->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to delete ticket'
+                ], 500);
+            }
 
             return back()->with('error', 'Failed to delete ticket');
         }

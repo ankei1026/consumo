@@ -93,6 +93,9 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::post('/reports/{id}/retry-analysis', [ReportController::class, 'retryAnalysis']);
     Route::put('/reports/{id}/status', [ReportController::class, 'updateStatus'])->name('reports.update-status');
 
+    // Add DELETE route for reports
+    Route::delete('/reports/{id}', [ReportController::class, 'destroy'])->name('reports.destroy');
+
     Route::get('/profile', [ProfileController::class, 'index'])->name('profile.index');
     Route::put('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::put('/profile/password', [ProfileController::class, 'updatePassword'])->name('profile.password');

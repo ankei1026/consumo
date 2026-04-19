@@ -1,4 +1,3 @@
-// resources/js/Pages/Report/Show.tsx
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Link, router } from '@inertiajs/react';
@@ -8,31 +7,50 @@ import {
     CheckCircle2,
     Bot,
     Eye,
-    Copy,
     X,
     Calendar,
     User,
     Home,
     Phone,
     MapPin,
-    TrendingUp,
-    TrendingDown,
-    AlertTriangle,
-    AlertCircle,
     Clock,
-    Zap,
     FileText,
     RefreshCw,
     XCircle,
     CheckCircle,
-    Edit2,
+    AlertCircle,
     Save,
 } from 'lucide-react';
-import DashboardLayout from '@/pages/Layouts/DashboardLayout';
+import DashboardLayout from '@/Pages/Layouts/DashboardLayout';
 import toast from 'react-hot-toast';
+
+// --- Interfaces ---
+interface AiResponse {
+    leak_detected: boolean;
+    severity: string;
+    priority: string;
+    summary: string;
+    image_analysis: string;
+    recommendation: string;
+    consumption_analysis: {
+        has_spike: boolean;
+        spike_percentage: number;
+        current_consumption: number;
+        average_consumption: number;
+        analysis: string;
+    };
+    text_consistency?: {
+        matches: boolean;
+        explanation: string;
+    };
+    trend_analysis?: any;
+    analyzed_at: string;
+    is_fallback?: boolean;
+}
 
 interface ReportShowProps {
     report: {
+        admin_feedback?: string | null;
         id: number;
         content: string;
         image: string | null;
@@ -57,69 +75,9 @@ interface ReportShowProps {
             current_reading: number;
             previous_reading: number;
         } | null;
-        ai_response: {
-            leak_detected: boolean;
-            severity: string;
-            priority: string;
-            summary: string;
-            image_analysis: string;
-            recommendation: string;
-            consumption_analysis: {
-                has_spike: boolean;
-                spike_percentage: number;
-                current_consumption: number;
-                average_consumption: number;
-                analysis: string;
-            };
-            text_consistency?: {
-                matches: boolean;
-                explanation: string;
-            };
-            trend_analysis?: any;
-            analyzed_at: string;
-        } | null;
+        ai_response: AiResponse | null;
     };
 }
-
-const getSeverityConfig = (severity: string) => {
-    const configs = {
-        critical: {
-            bg: 'bg-red-100',
-            text: 'text-red-800',
-            border: 'border-red-200',
-            icon: AlertTriangle,
-        },
-        high: {
-            bg: 'bg-orange-100',
-            text: 'text-orange-800',
-            border: 'border-orange-200',
-            icon: AlertCircle,
-        },
-        medium: {
-            bg: 'bg-yellow-100',
-            text: 'text-yellow-800',
-            border: 'border-yellow-200',
-            icon: Clock,
-        },
-        low: {
-            bg: 'bg-green-100',
-            text: 'text-green-800',
-            border: 'border-green-200',
-            icon: CheckCircle2,
-        },
-    };
-    return configs[severity as keyof typeof configs] || configs.low;
-};
-
-const getPriorityConfig = (priority: string) => {
-    const configs = {
-        immediate: { bg: 'bg-red-600', text: 'text-white' },
-        urgent: { bg: 'bg-orange-500', text: 'text-white' },
-        scheduled: { bg: 'bg-blue-500', text: 'text-white' },
-        monitor: { bg: 'bg-green-500', text: 'text-white' },
-    };
-    return configs[priority as keyof typeof configs] || configs.monitor;
-};
 
 const statusConfig: Record<
     string,
@@ -176,23 +134,22 @@ const itemVariants = {
 
 export default function ReportShow({ report }: ReportShowProps) {
     const [modalImage, setModalImage] = useState<string | null>(null);
-    const [selectedStatus, setSelectedStatus] = useState(
-        report.status || 'pending',
-    );
-    const [resolutionNotes, setResolutionNotes] = useState(
-        report.resolution_notes || '',
-    );
+    const [selectedStatus, setSelectedStatus] = useState(report.status || 'pending');
+    const [resolutionNotes, setResolutionNotes] = useState(report.resolution_notes || '');
     const [isUpdating, setIsUpdating] = useState(false);
-    const [currentStatus, setCurrentStatus] = useState(
-        report.status || 'pending',
-    );
+    const [currentStatus, setCurrentStatus] = useState(report.status || 'pending');
+    const [adminFeedback, setAdminFeedback] = useState(report.admin_feedback ?? '');
+    const [isSendingFeedback, setIsSendingFeedback] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [isRetrying, setIsRetrying] = useState(false);
 
-    // Sync with props when report changes
-    useEffect(() => {
-        setCurrentStatus(report.status || 'pending');
-        setSelectedStatus(report.status || 'pending');
-        setResolutionNotes(report.resolution_notes || '');
-    }, [report]);
+    const openModal = (image: string) => {
+        setModalImage(image);
+    };
+
+    const closeModal = () => {
+        setModalImage(null);
+    };
 
     const formatDate = (date: string) => {
         if (!date) return 'N/A';
@@ -207,52 +164,51 @@ export default function ReportShow({ report }: ReportShowProps) {
 
     const formatDateShort = (date: string) => {
         if (!date) return 'N/A';
-        return new Date(date).toLocaleDateString('en-PH', {
+        return new Date(date).toLocaleString('en-PH', {
             year: 'numeric',
             month: 'short',
             day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
         });
     };
 
-    const copyToClipboard = () => {
-        const summary = report.ai_response?.summary || 'No summary available';
-        navigator.clipboard
-            .writeText(summary)
-            .then(() => {
-                toast.success('Summary copied to clipboard!');
-            })
-            .catch(() => {
-                toast.error('Failed to copy summary');
-            });
+    // Handle admin feedback submit
+    const handleSendFeedback = () => {
+        setIsSendingFeedback(true);
+        router.put(
+            `/reports/${report.id}/status`,
+            { admin_feedback: adminFeedback },
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    toast.success('Admin feedback updated successfully');
+                    setIsSendingFeedback(false);
+                    // Optionally reload to show updated feedback
+                    router.reload({ preserveScroll: true });
+                },
+                onError: (errors) => {
+                    console.error('Feedback error:', errors);
+                    toast.error('Failed to update feedback');
+                    setIsSendingFeedback(false);
+                },
+            },
+        );
     };
 
-    const openModal = (imageSrc: string) => {
-        setModalImage(imageSrc);
-    };
-
-    const closeModal = () => {
-        setModalImage(null);
-    };
-
+    // Handle status update
     const handleUpdateStatus = () => {
-        if (selectedStatus === currentStatus && !resolutionNotes) {
-            toast.info('No changes to update');
-            return;
-        }
-
         setIsUpdating(true);
-
         router.put(
             `/reports/${report.id}/status`,
             {
                 status: selectedStatus,
-                resolution_notes: resolutionNotes,
             },
             {
                 preserveScroll: true,
                 onSuccess: () => {
                     toast.success('Report status updated successfully');
-                    // Force reload to get fresh data from server
+                    setCurrentStatus(selectedStatus);
                     router.reload({ preserveScroll: true });
                 },
                 onError: (errors) => {
@@ -266,14 +222,55 @@ export default function ReportShow({ report }: ReportShowProps) {
         );
     };
 
-    const severityConfig = report.ai_response
-        ? getSeverityConfig(report.ai_response.severity)
-        : null;
-    const priorityConfig = report.ai_response
-        ? getPriorityConfig(report.ai_response.priority)
-        : null;
-    const SeverityIcon = severityConfig?.icon || AlertCircle;
-    const StatusIcon = statusConfig[currentStatus]?.icon || Clock;
+    // Handle delete report
+    const handleDeleteReport = () => {
+        if (confirm('Are you sure you want to delete this report?')) {
+            setIsDeleting(true);
+            router.delete(`/reports/${report.id}`, {
+                onSuccess: () => {
+                    toast.success('Report deleted successfully');
+                    router.visit('/reports');
+                },
+                onError: () => {
+                    toast.error('Failed to delete report');
+                    setIsDeleting(false);
+                },
+            });
+        }
+    };
+
+    // Handle retry analysis
+    const handleRetryAnalysis = () => {
+        setIsRetrying(true);
+        router.post(
+            `/reports/${report.id}/retry-analysis`,
+            {},
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    toast.success('AI analysis retriggered successfully!');
+                    setTimeout(() => {
+                        router.reload({ preserveScroll: true });
+                    }, 1500);
+                },
+                onError: (errors) => {
+                    console.error('Error retrying analysis:', errors);
+                    toast.error('Failed to retry analysis');
+                },
+                onFinish: () => {
+                    setIsRetrying(false);
+                },
+            },
+        );
+    };
+
+    // Sync with props when report changes
+    useEffect(() => {
+        setCurrentStatus(report.status || 'pending');
+        setSelectedStatus(report.status || 'pending');
+        setResolutionNotes(report.resolution_notes || '');
+        setAdminFeedback(report.admin_feedback ?? '');
+    }, [report]);
 
     return (
         <DashboardLayout>
@@ -283,7 +280,7 @@ export default function ReportShow({ report }: ReportShowProps) {
                 animate="visible"
                 className="space-y-6"
             >
-                {/* Back Button */}
+                {/* Back Button and Delete Button */}
                 <motion.div
                     variants={itemVariants}
                     className="flex items-center justify-between"
@@ -296,81 +293,53 @@ export default function ReportShow({ report }: ReportShowProps) {
                         Back to Reports
                     </Link>
                     <button
-                        onClick={copyToClipboard}
-                        className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+                        onClick={handleDeleteReport}
+                        disabled={isDeleting}
+                        className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                        <Copy className="h-4 w-4" />
-                        Copy Summary
+                        {isDeleting ? (
+                            <>
+                                <RefreshCw className="h-4 w-4 animate-spin" />
+                                Deleting...
+                            </>
+                        ) : (
+                            <>
+                                <X className="h-4 w-4" />
+                                Delete Report
+                            </>
+                        )}
                     </button>
                 </motion.div>
 
-                {/* Main Card */}
+                {/* Main Content */}
                 <motion.div
                     variants={itemVariants}
                     className="rounded-xl border border-gray-100 bg-white shadow-sm"
                 >
-                    <div className="p-6 lg:p-8">
-                        {/* Header */}
-                        <div className="mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 pb-6">
+                    <div className="p-6">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-4 border-b pb-4">
                             <div>
-                                <h1 className="text-2xl font-bold text-gray-900 lg:text-3xl">
+                                <h1 className="text-2xl font-bold text-gray-900">
                                     Report #{report.id}
                                 </h1>
-                                <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-500">
-                                    <span className="inline-flex items-center gap-1">
-                                        <User className="h-4 w-4" />
-                                        {report.consumer?.name || 'N/A'}
-                                    </span>
-                                    <span className="inline-flex items-center gap-1">
-                                        <Calendar className="h-4 w-4" />
-                                        {formatDate(report.created_at)}
-                                    </span>
-                                </div>
+                                <p className="text-sm text-gray-500">
+                                    Created on {formatDate(report.created_at)}
+                                </p>
                             </div>
-
                             <div className="flex flex-wrap gap-2">
-                                {/* Status Badge */}
                                 <span
-                                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${statusConfig[currentStatus]?.bgColor} ${statusConfig[currentStatus]?.color}`}
+                                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${
+                                        statusConfig[currentStatus]?.bgColor || 'bg-gray-50'
+                                    } ${
+                                        statusConfig[currentStatus]?.color || 'text-gray-700'
+                                    }`}
                                 >
-                                    <StatusIcon className="h-3 w-3" />
-                                    {statusConfig[currentStatus]?.label ||
-                                        currentStatus}
+                                    {statusConfig[currentStatus]?.icon &&
+                                        React.createElement(statusConfig[currentStatus].icon, {
+                                            className: 'h-3 w-3',
+                                        })}
+                                    {statusConfig[currentStatus]?.label || currentStatus.toUpperCase()}
                                 </span>
-
-                                {report.ai_response && (
-                                    <>
-                                        <span
-                                            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${severityConfig?.bg} ${severityConfig?.text}`}
-                                        >
-                                            <SeverityIcon className="h-3 w-3" />
-                                            {report.ai_response.severity?.toUpperCase()}
-                                        </span>
-                                        <span
-                                            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${priorityConfig?.bg} ${priorityConfig?.text}`}
-                                        >
-                                            <Clock className="h-3 w-3" />
-                                            {report.ai_response.priority?.toUpperCase()}
-                                        </span>
-                                        <span
-                                            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${
-                                                report.ai_response.leak_detected
-                                                    ? 'bg-red-100 text-red-800'
-                                                    : 'bg-green-100 text-green-800'
-                                            }`}
-                                        >
-                                            {report.ai_response
-                                                .leak_detected ? (
-                                                <Droplet className="h-3 w-3" />
-                                            ) : (
-                                                <CheckCircle2 className="h-3 w-3" />
-                                            )}
-                                            {report.ai_response.leak_detected
-                                                ? 'Leak Detected'
-                                                : 'No Leak'}
-                                        </span>
-                                    </>
-                                )}
                             </div>
                         </div>
 
@@ -574,13 +543,13 @@ export default function ReportShow({ report }: ReportShowProps) {
                                                             setSelectedStatus(s)
                                                         }
                                                         disabled={isUpdating}
-                                                        className={`flex items-center gap-2 rounded-xl border-[1.5px] px-4 py-2.5 text-sm font-medium transition-all ${
+                                                        className={`flex items-center gap-2 rounded-xl border-[1.5px] px-4 py-2 text-sm font-medium transition-all ${
                                                             isActive
                                                                 ? `${cfg.bgColor} ${cfg.color} border-current`
                                                                 : 'border-transparent bg-gray-50 text-gray-500 hover:border-gray-200'
                                                         }`}
                                                     >
-                                                        <cfg.icon className="h-4 w-4" />
+                                                        {React.createElement(cfg.icon, { className: 'h-4 w-4' })}
                                                         {cfg.label}
                                                     </button>
                                                 );
@@ -592,15 +561,21 @@ export default function ReportShow({ report }: ReportShowProps) {
                                                 onClick={handleUpdateStatus}
                                                 disabled={
                                                     isUpdating ||
-                                                    (selectedStatus ===
-                                                        currentStatus &&
-                                                        !resolutionNotes)
+                                                    selectedStatus === currentStatus
                                                 }
-                                                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                                                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
                                             >
-                                                {isUpdating
-                                                    ? 'Updating...'
-                                                    : 'Update status'}
+                                                {isUpdating ? (
+                                                    <>
+                                                        <RefreshCw className="h-4 w-4 animate-spin" />
+                                                        Updating...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Save className="h-4 w-4" />
+                                                        Update Status
+                                                    </>
+                                                )}
                                             </button>
                                         </div>
 
@@ -613,14 +588,85 @@ export default function ReportShow({ report }: ReportShowProps) {
                                     </div>
                                 </div>
 
+                                {/* Bot/AI Assistant Section */}
+                                <div>
+                                    <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                                        <Bot className="h-5 w-5 text-blue-500" />
+                                         Admin Feedback
+                                    </h2>
+                                    <div className="rounded-lg bg-gray-50 p-4 space-y-3">
+                                        {report.admin_feedback && (
+                                            <div className="mb-2">
+                                                <div className="text-xs text-gray-500 mb-1">Feedback</div>
+                                                <div className="rounded bg-white p-2 text-gray-700 border border-gray-200">
+                                                    {report.admin_feedback || 'No admin feedback yet.'}
+                                                </div>
+                                            </div>
+                                        )}
+                                        <div>
+                                            <div className="text-xs text-gray-500 mb-1">Admin Feedback</div>
+                                            <textarea
+                                                className="w-full rounded border border-gray-300 p-2 text-gray-700 focus:ring focus:ring-blue-200"
+                                                rows={3}
+                                                value={adminFeedback}
+                                                onChange={e => setAdminFeedback(e.target.value)}
+                                                placeholder="Type admin feedback or message here..."
+                                            />
+                                            <button
+                                                className="mt-2 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                                                onClick={handleSendFeedback}
+                                                disabled={isSendingFeedback}
+                                            >
+                                                {isSendingFeedback ? (
+                                                    <>
+                                                        <RefreshCw className="h-4 w-4 animate-spin" />
+                                                        Sending...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Bot className="h-4 w-4" />
+                                                        Send Feedback
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 {/* AI Analysis Section */}
                                 {report.ai_response ? (
                                     <div className="rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
-                                        <div className="mb-4 flex items-center gap-2">
-                                            <Bot className="h-6 w-6 text-blue-600" />
-                                            <h2 className="text-xl font-semibold text-gray-900">
-                                                AI Analysis Results
-                                            </h2>
+                                        <div className="mb-4 flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <Bot className="h-6 w-6 text-blue-600" />
+                                                <h2 className="text-xl font-semibold text-gray-900">
+                                                    AI Analysis Results
+                                                </h2>
+                                                {report.ai_response.is_fallback && (
+                                                    <span className="text-xs text-orange-600">
+                                                        (Fallback Mode)
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {report.ai_response.is_fallback && (
+                                                <button
+                                                    onClick={handleRetryAnalysis}
+                                                    disabled={isRetrying}
+                                                    className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                                                >
+                                                    {isRetrying ? (
+                                                        <>
+                                                            <RefreshCw className="h-3 w-3 animate-spin" />
+                                                            Retrying...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <RefreshCw className="h-3 w-3" />
+                                                            Retry Analysis
+                                                        </>
+                                                    )}
+                                                </button>
+                                            )}
                                         </div>
 
                                         <div className="space-y-6">
@@ -796,11 +842,16 @@ export default function ReportShow({ report }: ReportShowProps) {
                                                     report.ai_response
                                                         .analyzed_at,
                                                 )}
+                                                {report.ai_response.is_fallback && (
+                                                    <span className="ml-2 text-orange-500">
+                                                        (Fallback Analysis)
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="flex h-full min-h-[400px] flex-col items-center justify-center rounded-lg bg-gray-50 p-8 text-center">
+                                    <div className="flex h-full min-h-100 flex-col items-center justify-center rounded-lg bg-gray-50 p-8 text-center">
                                         <div className="mb-3 h-10 w-10 animate-spin rounded-full border-b-2 border-blue-500"></div>
                                         <p className="text-sm text-gray-500">
                                             AI analysis is being processed...
@@ -809,15 +860,12 @@ export default function ReportShow({ report }: ReportShowProps) {
                                             This may take a few moments
                                         </p>
                                         <button
-                                            onClick={() =>
-                                                router.post(
-                                                    `/reports/${report.id}/retry-analysis`,
-                                                )
-                                            }
-                                            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                                            onClick={handleRetryAnalysis}
+                                            disabled={isRetrying}
+                                            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                                         >
-                                            <RefreshCw className="h-4 w-4" />
-                                            Retry Analysis
+                                            <RefreshCw className={`h-4 w-4 ${isRetrying ? 'animate-spin' : ''}`} />
+                                            {isRetrying ? 'Retrying...' : 'Retry Analysis'}
                                         </button>
                                     </div>
                                 )}
